@@ -1,4 +1,5 @@
 import AppKit
+import Security
 import XCTest
 import WebKit
 @testable import CalorieLogger
@@ -44,10 +45,10 @@ final class NativeModelTests: XCTestCase {
     }
 
     @MainActor
-    func testNativeSessionPersistsTokenInAnIsolatedKeychainAndCanForgetOnlyTheToken() throws {
+    func testNativeSessionPersistsTheWholeSessionAndCanForgetOnlyTheToken() throws {
         let identifier = UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "CalorieLoggerTests.\(identifier)"))
-        let bridge = WebBridge(defaults: defaults, keychainService: "com.calorielogger.app.tests.\(identifier)")
+        let bridge = WebBridge(defaults: defaults, legacyKeychainService: "com.calorielogger.app.tests.\(identifier)")
         defer { bridge.clearSession(); defaults.removePersistentDomain(forName: "CalorieLoggerTests.\(identifier)") }
         let session = StoredSession(baseUrl: "https://calorie-logger.example.test", email: "person@example.test", token: "opaque-token")
 
@@ -55,6 +56,32 @@ final class NativeModelTests: XCTestCase {
         XCTAssertEqual(try bridge.loadSession(), session)
         bridge.clearToken()
         XCTAssertEqual(try bridge.loadSession(), StoredSession(baseUrl: session.baseUrl, email: session.email, token: ""))
+        // Signing out leaves nothing behind, so the next launch reaches the sign-in screen.
+        bridge.clearSession()
+        XCTAssertNil(try bridge.loadSession())
+    }
+
+    /// The session must never touch Keychain again: an ad-hoc signature changes on every build, and
+    /// macOS then asks the owner to unlock their login keychain for a build it has not seen before.
+    @MainActor
+    func testNativeSessionNeverWritesToKeychain() throws {
+        let identifier = UUID().uuidString
+        let service = "com.calorielogger.app.tests.\(identifier)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "CalorieLoggerTests.\(identifier)"))
+        let bridge = WebBridge(defaults: defaults, legacyKeychainService: service)
+        defer { bridge.clearSession(); defaults.removePersistentDomain(forName: "CalorieLoggerTests.\(identifier)") }
+
+        try bridge.saveSession(StoredSession(baseUrl: "https://calorie-logger.example.test", email: "person@example.test", token: "opaque-token"))
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching([
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: "calorie-logger-api-token",
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ] as CFDictionary, &result)
+        XCTAssertEqual(status, errSecItemNotFound)
     }
 
     func testMacReleaseDecodesTheServerEnvelopeAndItsAbsence() throws {

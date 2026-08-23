@@ -151,7 +151,7 @@ def main() -> int:
 
             # A day's worth of real records: a food, an entry that references it, and targets.
             status, synced = request(server.base, "POST", API + "/sync", {
-                "schemaVersion": 3, "deviceId": "device000000001", "since": 0,
+                "schemaVersion": 4, "deviceId": "device000000001", "since": 0,
                 "changes": {
                     "foods": [{
                         "id": "food00000000001", "name": "Oats", "icon": "pic:cereal", "basisAmount": 100,
@@ -166,7 +166,7 @@ def main() -> int:
                     }],
                     "settings": {
                         "targets": {"calories": 2000, "protein": 125, "fat": None, "carbs": 250},
-                        "dayRolloverMinutes": 0,
+                        "dayRolloverMinutes": 0, "contributionThreshold": 20,
                         "createdAt": "2026-08-20T09:00:00.000Z", "editedAt": "2026-08-20T09:00:02.000Z",
                     },
                 },
@@ -221,7 +221,7 @@ def main() -> int:
             assert status == 200, ("a session from before the deployment should still be valid", resumed)
 
             status, synced = request(server.base, "POST", API + "/sync", {
-                "schemaVersion": 3, "deviceId": "device000000001", "since": 0,
+                "schemaVersion": 4, "deviceId": "device000000001", "since": 0,
                 "changes": {"foods": [], "entries": [], "settings": None},
             }, "Bearer " + login["data"]["token"])
             assert status == 200, synced

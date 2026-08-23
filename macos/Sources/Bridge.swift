@@ -7,18 +7,21 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
     private enum Keys {
         static let baseURL = "CalorieLoggerBackendBaseURL"
         static let email = "CalorieLoggerBackendEmail"
+        static let token = "CalorieLoggerBackendToken"
         static let account = "calorie-logger-api-token"
     }
 
     private let defaults: UserDefaults
-    private let keychainService: String
+    /// Only used to clear the session an earlier release left in Keychain. Nothing is written there.
+    private let legacyKeychainService: String
     var onSummary: ((MenuSummary) -> Void)?
     var onConnectionState: ((String) -> Void)?
 
-    init(defaults: UserDefaults = .standard, keychainService: String = "com.calorielogger.app.session") {
+    init(defaults: UserDefaults = .standard, legacyKeychainService: String = "com.calorielogger.app.session") {
         self.defaults = defaults
-        self.keychainService = keychainService
+        self.legacyKeychainService = legacyKeychainService
         super.init()
+        discardLegacyKeychainSession()
     }
 
     func userContentController(
@@ -64,10 +67,22 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
     }
 
+    // The whole session lives in preferences, the API token included.
+    //
+    // Keychain was the obvious home for a token and turned out to be the wrong one here. macOS ties
+    // a Keychain item's access control to the code identity that wrote it, and this application
+    // carries an ad-hoc signature, which differs on every build. So each new build was a stranger to
+    // the item it had written itself, and the owner was asked to unlock their login keychain again --
+    // for a build about to be replaced by the next one. The prompt is indistinguishable from the
+    // ones worth being suspicious of, and teaching someone to type their password into it whenever
+    // an application asks is a worse outcome than where the token sits.
+    //
+    // What it costs: the token is readable by anything already running as this user. It is a
+    // session credential for the owner's own server, it expires, and signing out revokes it.
     func loadSession() throws -> StoredSession? {
         guard let baseURL = defaults.string(forKey: Keys.baseURL),
               let email = defaults.string(forKey: Keys.email) else { return nil }
-        return StoredSession(baseUrl: baseURL, email: email, token: try readToken() ?? "")
+        return StoredSession(baseUrl: baseURL, email: email, token: defaults.string(forKey: Keys.token) ?? "")
     }
 
     func saveSession(_ session: StoredSession) throws {
@@ -76,7 +91,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
         defaults.set(session.baseUrl, forKey: Keys.baseURL)
         defaults.set(session.email, forKey: Keys.email)
-        try writeToken(session.token)
+        defaults.set(session.token, forKey: Keys.token)
     }
 
     func clearSession() {
@@ -86,49 +101,17 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
     }
 
     func clearToken() {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: keychainService,
-            kSecAttrAccount: Keys.account
-        ]
-        SecItemDelete(query as CFDictionary)
+        defaults.removeObject(forKey: Keys.token)
     }
 
-    private func readToken() throws -> String? {
-        let query: [CFString: Any] = [
+    /// Removes what an earlier release stored in Keychain, so the prompt it caused stops for good.
+    /// Deleting an item needs no access to its contents, so this asks the owner nothing.
+    private func discardLegacyKeychainSession() {
+        SecItemDelete([
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: keychainService,
-            kSecAttrAccount: Keys.account,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data, let token = String(data: data, encoding: .utf8) else {
-            throw LoggerError.unavailable("The saved Calorie Logger session could not be read from Keychain.")
-        }
-        return token
-    }
-
-    private func writeToken(_ token: String) throws {
-        let base: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: keychainService,
+            kSecAttrService: legacyKeychainService,
             kSecAttrAccount: Keys.account
-        ]
-        let data = Data(token.utf8)
-        let status = SecItemUpdate(base as CFDictionary, [kSecValueData: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var insert = base
-            insert[kSecValueData] = data
-            insert[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            guard SecItemAdd(insert as CFDictionary, nil) == errSecSuccess else {
-                throw LoggerError.unavailable("The Calorie Logger session could not be saved to Keychain.")
-            }
-        } else if status != errSecSuccess {
-            throw LoggerError.unavailable("The Calorie Logger session could not be updated in Keychain.")
-        }
+        ] as CFDictionary)
     }
 
     private func saveExport(_ request: ExportSaveRequest, replyHandler: @escaping (Any?, String?) -> Void) throws {

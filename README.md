@@ -20,6 +20,12 @@ So the question is not "did I get enough protein today" but "which food spent my
 budget" — and the answer is on screen, next to the food that did it. It is the difference between a
 number to feel bad about and something you can act on tomorrow.
 
+To make that answer easier to find, a food taking a large share of your fat or carbohydrate target
+is tinted where its number sits, more strongly the larger the share. Every helping of the same food
+counts towards it, so three modest servings are weighed as the one decision they really were rather
+than disappearing as three unremarkable rows. It shows up as you log, not at the end of the day, and
+you choose the share worth flagging — or turn it off.
+
 Every food has a picture, so the day reads at a glance rather than as a wall of text.
 
 ![Adding a food](docs/screenshots/add-food.png)

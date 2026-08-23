@@ -1,5 +1,5 @@
 import { estimateFood as requestFoodEstimate, externalFoods, macRelease as requestMacRelease, serverDownloadURL } from "./api";
-import { localStore } from "./localStore";
+import { localStore, type Preferences } from "./localStore";
 import type {
   DayData, EntryPlacement, ExportDocument, ExportRequest, ExternalFoodResult,
   ExternalFoodSearchResponse, Food, FoodEstimate, FoodEstimateRequest, FoodInput, FoodUsage, Meal, Targets
@@ -31,8 +31,8 @@ export interface FoodRepository {
   copyEntries(ids: string[], destinationDate: string): Promise<void>;
   repeatPreviousMeal(date: string, meal: Meal): Promise<void>;
   saveTargets(targets: Targets): Promise<Targets>;
-  /** Minutes after local midnight a new day begins; lets night-owl logging stay on "yesterday". */
-  saveDayRollover(minutes: number): Promise<number>;
+  /** When a day starts, and how large a share of a target makes a food worth flagging. */
+  savePreferences(preferences: Preferences): Promise<Preferences>;
   /** Empties this account on every device and restores the shipped catalogue. */
   resetData(): Promise<void>;
   /** The desktop application this server offers, or null when it has never published one. */
@@ -58,7 +58,7 @@ class LocalFoodRepository implements FoodRepository {
   copyEntries = (ids: string[], destinationDate: string) => localStore.copyEntries(ids, destinationDate);
   repeatPreviousMeal = (date: string, meal: Meal) => localStore.repeatPreviousMeal(date, meal);
   saveTargets = (targets: Targets) => localStore.saveTargets(targets);
-  saveDayRollover = (minutes: number) => localStore.saveDayRollover(minutes);
+  savePreferences = (preferences: Preferences) => localStore.savePreferences(preferences);
   resetData = () => localStore.resetToDefaults();
   macRelease = () => requestMacRelease();
   downloadURL = (path: string) => serverDownloadURL(path);

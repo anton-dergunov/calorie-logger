@@ -4,7 +4,7 @@ const API_VERSION = 5;
 // Bumped whenever the replicated record shape changes. A client that disagrees is refused a
 // merge outright: a stale device writing the current schema's fields is how a replicated store
 // gets corrupted, and refusing costs the owner nothing but an app update.
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 // The release this server is running, supplied by the deployment. It names the build in `/health`
 // and identifies this application to Open Food Facts, whose terms ask for a contact URL.
@@ -113,6 +113,16 @@ function validRolloverMinutes(value) {
   const number = Math.round(Number(value));
   if (!Number.isFinite(number) || number < 0 || number >= 1440) {
     throw failure(400, "invalid_input", "Day rollover time must be a valid time of day.");
+  }
+  return number;
+}
+
+// The share of a daily target above which a food is flagged in the log. 0 turns flagging off; below
+// a few percent all but the smallest helping would be flagged, which says nothing.
+function validContributionThreshold(value) {
+  const number = Math.round(Number(value));
+  if (!Number.isFinite(number) || number < 0 || number > 100 || (number > 0 && number < 5)) {
+    throw failure(400, "invalid_input", "The flagging threshold must be zero, or between 5 and 100 percent.");
   }
   return number;
 }
@@ -277,6 +287,7 @@ function settingsJSON(record) {
     id: record.id,
     targets: targetsJSON(record),
     dayRolloverMinutes: record.getInt("day_rollover_minutes"),
+    contributionThreshold: record.getInt("contribution_threshold"),
     ...syncFieldsJSON(record),
   };
 }
@@ -387,6 +398,7 @@ function mergeSettings(context, payload) {
     targets[key] = optionalPositive((payload.targets || {})[key], label);
   });
   const dayRolloverMinutes = validRolloverMinutes(payload.dayRolloverMinutes);
+  const contributionThreshold = validContributionThreshold(payload.contributionThreshold);
   const existing = firstRecord(context.app, "user_settings", "owner = {:owner}", { owner: context.owner });
   return mergeRecord(context, "user_settings", existing, payload, (record) => {
     TARGET_KEYS.forEach((key) => {
@@ -394,6 +406,7 @@ function mergeSettings(context, payload) {
       record.set(key, targets[key] === null ? 0 : targets[key]);
     });
     record.set("day_rollover_minutes", dayRolloverMinutes);
+    record.set("contribution_threshold", contributionThreshold);
   });
 }
 

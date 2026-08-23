@@ -80,6 +80,8 @@ export interface StoredTargets extends SyncFields {
   targets: Targets;
   /** Minutes after local midnight a new day begins. 0 (the default) is plain midnight. */
   dayRolloverMinutes: number;
+  /** Percentage of a daily target above which a food is flagged in the log. 0 turns flagging off. */
+  contributionThreshold: number;
 }
 
 export interface FoodUsage {
@@ -248,6 +250,73 @@ export function sumNutrition(entries: Nutrition[]): Nutrition {
     }),
     emptyNutrition()
   );
+}
+
+/**
+ * A food taking a fifth of a daily target is the point at which nutrition labelling calls a serving
+ * a high source of something you are trying to limit, and it is a sensible place to start looking.
+ */
+export const DEFAULT_CONTRIBUTION_THRESHOLD = 20;
+
+/** The macros a food can be flagged for. Protein is excluded: eating more of it is not the problem. */
+export const FLAGGED_MACROS = ["fat", "carbs"] as const;
+export type FlaggedMacro = (typeof FLAGGED_MACROS)[number];
+
+/** 0 is no flag; 1 to 3 are increasing shares of a daily target. */
+export type ContributionLevel = 0 | 1 | 2 | 3;
+
+export interface FoodContribution {
+  /** How many of the day's entries this food accounts for. */
+  count: number;
+  shares: Record<FlaggedMacro, number | null>;
+  levels: Record<FlaggedMacro, ContributionLevel>;
+}
+
+/**
+ * One preference tunes the whole scale: the steps are multiples of the flagging threshold, so
+ * raising the threshold widens every band with it rather than only moving the first one.
+ */
+export function contributionLevel(share: number | null, thresholdPercent: number): ContributionLevel {
+  if (share === null || !Number.isFinite(share) || thresholdPercent <= 0) return 0;
+  // Banded on the whole percentage the interface shows, not on the raw ratio, so a food described
+  // as taking 35% of a target is never tinted as though it took 34.9999%.
+  const percent = Math.round(share * 100);
+  if (percent < thresholdPercent) return 0;
+  if (percent < thresholdPercent * 1.75) return 1;
+  if (percent < thresholdPercent * 2.5) return 2;
+  return 3;
+}
+
+/**
+ * A food's share of the day's budget for a macro, summed over every entry of that food rather than
+ * judged one portion at a time. A light food eaten repeatedly is then weighed as the block it
+ * really is, instead of hiding behind the individual servings it was logged as.
+ *
+ * The denominator is the target, never the running day total: a share decided against what has been
+ * eaten so far would make the first entry of the day the whole of it, and would restate every
+ * earlier row on each new one.
+ */
+export function foodContributions(entries: LogEntry[], targets: Targets, thresholdPercent: number): Map<string, FoodContribution> {
+  const totals = new Map<string, { count: number; fat: number; carbs: number }>();
+  for (const entry of entries) {
+    const running = totals.get(entry.foodId) ?? { count: 0, fat: 0, carbs: 0 };
+    running.count += 1;
+    running.fat += entry.fat;
+    running.carbs += entry.carbs;
+    totals.set(entry.foodId, running);
+  }
+  const contributions = new Map<string, FoodContribution>();
+  for (const [foodId, total] of totals) {
+    const shares = {} as Record<FlaggedMacro, number | null>;
+    const levels = {} as Record<FlaggedMacro, ContributionLevel>;
+    for (const macro of FLAGGED_MACROS) {
+      const target = targets[macro];
+      shares[macro] = target !== null && target > 0 ? total[macro] / target : null;
+      levels[macro] = contributionLevel(shares[macro], thresholdPercent);
+    }
+    contributions.set(foodId, { count: total.count, shares, levels });
+  }
+  return contributions;
 }
 
 /**

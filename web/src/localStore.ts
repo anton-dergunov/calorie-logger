@@ -3,14 +3,14 @@ import { defaultCatalog } from "./defaultCatalog";
 import { localDatabase, memoryDatabase, pendingKey, type DatabaseMeta, type DatabaseWrite, type RecordStore } from "./localDatabase";
 import { newDeviceId, newId, nowInstant } from "./ids";
 import {
-  emptyNutrition, emptyTargets, scaledNutrition, sumNutrition, supersedes,
+  DEFAULT_CONTRIBUTION_THRESHOLD, emptyNutrition, emptyTargets, scaledNutrition, sumNutrition, supersedes,
   type DayData, type EntryPlacement, type ExportDocument, type ExportRequest, type Food, type FoodInput,
   type FoodUsage, type LogEntry, type Meal, type StoredEntry, type StoredTargets, type SyncChanges,
   type SyncFields, type Targets
 } from "./types";
 
 /** Replicated record shape. The server refuses to merge a client that disagrees. */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 const EXPORT_SCHEMA_VERSION = 5;
 const MEAL_ORDER: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 const SETTINGS_ID = "settings";
@@ -21,12 +21,25 @@ export interface StoreSnapshot {
   targets: Targets;
   /** Minutes after local midnight a new day begins. 0 (the default) is plain midnight. */
   dayRolloverMinutes: number;
+  /** Percentage of a daily target above which a food is flagged in the log. 0 turns flagging off. */
+  contributionThreshold: number;
   pendingCount: number;
   /** False when this device could not open its database and is holding the log in memory only. */
   persistent: boolean;
 }
 
-const EMPTY_SNAPSHOT: StoreSnapshot = { ready: false, foods: [], targets: emptyTargets(), dayRolloverMinutes: 0, pendingCount: 0, persistent: true };
+/** The settings the owner edits together in Preferences, written as one record. */
+export type Preferences = Pick<StoredTargets, "dayRolloverMinutes" | "contributionThreshold">;
+
+const EMPTY_SNAPSHOT: StoreSnapshot = {
+  ready: false,
+  foods: [],
+  targets: emptyTargets(),
+  dayRolloverMinutes: 0,
+  contributionThreshold: DEFAULT_CONTRIBUTION_THRESHOLD,
+  pendingCount: 0,
+  persistent: true
+};
 
 function entryOrder(left: StoredEntry, right: StoredEntry): number {
   return left.sortIndex - right.sortIndex || left.id.localeCompare(right.id);
@@ -296,6 +309,7 @@ class LocalStore {
       id: this.settings?.id ?? SETTINGS_ID,
       targets: emptyTargets(),
       dayRolloverMinutes: 0,
+      contributionThreshold: DEFAULT_CONTRIBUTION_THRESHOLD,
       ...this.stamp(this.settings?.createdAt)
     };
     await this.commit({ foods: [...foods, ...this.catalogueFoods()], entries, settings });
@@ -410,21 +424,22 @@ class LocalStore {
       id: this.settings?.id ?? SETTINGS_ID,
       targets,
       dayRolloverMinutes: this.settings?.dayRolloverMinutes ?? 0,
+      contributionThreshold: this.settings?.contributionThreshold ?? DEFAULT_CONTRIBUTION_THRESHOLD,
       ...this.stamp(this.settings?.createdAt)
     };
     await this.commit({ settings: record });
     return targets;
   }
 
-  async saveDayRollover(minutes: number): Promise<number> {
+  async savePreferences(preferences: Preferences): Promise<Preferences> {
     const record: StoredTargets = {
       id: this.settings?.id ?? SETTINGS_ID,
       targets: this.settings?.targets ?? emptyTargets(),
-      dayRolloverMinutes: minutes,
+      ...preferences,
       ...this.stamp(this.settings?.createdAt)
     };
     await this.commit({ settings: record });
-    return minutes;
+    return preferences;
   }
 
   exportDocument(request: ExportRequest): ExportDocument {
@@ -571,6 +586,7 @@ class LocalStore {
       foods: this.rankedFoods(),
       targets: this.settings?.targets ?? emptyTargets(),
       dayRolloverMinutes: this.settings?.dayRolloverMinutes ?? 0,
+      contributionThreshold: this.settings?.contributionThreshold ?? DEFAULT_CONTRIBUTION_THRESHOLD,
       pendingCount: this.pending.size,
       persistent: this.persistent
     };

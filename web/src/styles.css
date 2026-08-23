@@ -139,6 +139,16 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .food-entry-main > span { min-width: 0; white-space: nowrap; }
 .food-entry-main > span:not(.food-name-cell) { overflow: hidden; text-align: right; text-overflow: ellipsis; }
 .food-entry-main > span strong { color: var(--ink); }
+/* How much of the day's fat or carbohydrate budget one food takes, warmest for the largest share.
+   The box-shadow, rather than padding, bleeds the tint past the text: at 35px columns on a phone a
+   padded cell would reflow the row, and a shadow has no layout box to reflow with. The number darkens
+   as it tints, which reads as promoted and keeps contrast above the plain cell's rather than below. */
+.food-entry-main > span[class^="share-"] { border-radius: 3px; color: var(--ink); background: var(--share-tint); box-shadow: 0 0 0 3px var(--share-tint); }
+.share-1 { --share-tint: rgba(165, 84, 60, .1); }
+.share-2 { --share-tint: rgba(165, 84, 60, .2); }
+.share-3 { --share-tint: rgba(165, 84, 60, .3); }
+/* Forced colours drop the tint entirely, so the flag needs a shape that survives it. */
+@media (forced-colors: active) { .food-entry-main > span[class^="share-"] { text-decoration: underline; } }
 .check-cell { width: 29px; flex: 0 0 29px; display: grid; place-items: center; }
 input[type="checkbox"] { accent-color: var(--green); width: 15px; height: 15px; }
 .food-name-cell { min-width: 0; display: flex; align-items: center; gap: 10px; }

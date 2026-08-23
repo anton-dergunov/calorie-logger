@@ -4,9 +4,10 @@
 
 Calorie Logger is a deliberately small, private calorie and macro logger. It tracks calories, protein, fat, and carbohydrates, with an emphasis on fast reuse of a personal food library. The responsive interface is an installable PWA for iPhone, iPad, and Android and is also bundled in a macOS menu-bar host.
 
-The product name is **Calorie Logger**. Never introduce or restore a different product name in interface copy, metadata, documentation, diagnostics, code-facing labels, filenames, environment variables, stored keys, deployment assets, HTTP routes, or ordinary prose. The former name and its lowercase spelling are forbidden throughout the repository, including generated assets; do not add aliases or backward-compatibility shims for it. The sole exception is `web/src/assets/potion/vocab.txt`: it is immutable third-party model vocabulary, ordinary language tokens in it are not product naming, and agents must never remove, rename, filter, or replace its tokens to satisfy repository wording rules.
+The product name is **Calorie Logger**. Never introduce or restore a different product name in interface copy, metadata, documentation, diagnostics, code-facing labels, filenames, environment variables, stored keys, deployment assets, HTTP routes, or ordinary prose, and do not add aliases or backward-compatibility shims for an earlier name. This is a rule about naming the product, not about vocabulary: an ordinary English word that happens to appear in a former name is still an ordinary English word, and is fine wherever it reads naturally.
 
-Current features include the day log, date navigation, targets, a usage-ranked personal food catalogue seeded from a shipped default catalogue of everyday foods, resetting the account back to that catalogue, custom, externally sourced, and one-off foods, portions described in words and estimated by a language model, mobile barcode scanning and food, label, or recipe photographs, quantity scaling, breakfast/lunch/dinner/snack sections, entry editing/deletion/reordering, copying entries, repeating a meal from the previous day, JSON export, shared private accounts, PWA installation, a native menu-bar summary, and full offline use with automatic synchronisation across devices. Self-registration and password recovery are deferred.
+Current features include the day log, date navigation, targets, a usage-ranked personal food catalogue seeded from a shipped default catalogue of everyday foods, resetting the account back to that catalogue, tinting foods that take a large share of a fat or
+carbohydrate target, custom, externally sourced, and one-off foods, portions described in words and estimated by a language model, mobile barcode scanning and food, label, or recipe photographs, quantity scaling, breakfast/lunch/dinner/snack sections, entry editing/deletion/reordering, copying entries, repeating a meal from the previous day, JSON export, shared private accounts, PWA installation, a native menu-bar summary, and full offline use with automatic synchronisation across devices. Self-registration and password recovery are deferred.
 
 `README.md` is the public front page. `docs/setup.md` covers installing, updating, and operating a
 server; `docs/sync.md` is the replication design; `docs/development.md` is the contributor guide.
@@ -24,7 +25,7 @@ The application has three layers:
 
 1. `web/` is the Vite, React, and TypeScript PWA. It owns the responsive UI, the complete local replica of the owner's data, every domain operation over it, and the synchronisation engine. `FoodRepository` resolves entirely against the replica; only external-catalogue search, barcode lookup, and described-portion estimates reach the network.
 2. `pocketbase/` is the pinned server package. One canonical bootstrap migration defines the complete private owner-scoped schema; hooks implement authentication, the single versioned `/sync` merge route, external-food search, and the described-portion estimate. The server stores and merges records; it does not compute days, ordering, or exports. Generic collection access is blocked.
-3. `macos/` is a thin Swift/AppKit host. It owns the native window, menu-bar item and popover, Keychain session storage, JSON export panel, the in-place updater and login item, and the reduced typed bridge.
+3. `macos/` is a thin Swift/AppKit host. It owns the native window, menu-bar item and popover, session storage, JSON export panel, the in-place updater and login item, and the reduced typed bridge.
 
 The macOS app bundles `web/dist` and serves it to `WKWebView` through `WebInterfaceSchemeHandler` on the `calorie-logger://app` origin. Do not revert this to `loadHTMLString` with a `file://` base URL: a `file://` page has no usable IndexedDB, which is where the offline replica lives, and WebKit may parse `file://` script tags without executing them, resulting in a blank window. A hosted `WKWebView` test asserts both that the interface renders and that `indexedDB.open` succeeds.
 
@@ -55,7 +56,7 @@ Web bridge calls are limited to session persistence, export saving, and menu-sum
 - `pocketbase/pb_migrations/1724140800_calorie_logger_schema.js`: the complete canonical PocketBase schema bootstrap.
 - `pocketbase/pb_hooks/calorie-logger.js`: authentication, the `/sync` merge, external-food search, the portion estimate, and the macOS release manifest.
 - `pocketbase/pb_hooks/main.pb.js`: route registration, including the static macOS download route.
-- `macos/Sources/Bridge.swift`: Keychain session bridge, menu-summary receiver, and native JSON save panel.
+- `macos/Sources/Bridge.swift`: session bridge, menu-summary receiver, and native JSON save panel.
 - `macos/Sources/Models.swift`: minimal native bridge and menu-summary models.
 - `macos/Sources/MenuBarController.swift`: three-lane macro status icon, the update mark beside it, and the SwiftUI totals popover.
 - `macos/Sources/AppRelease.swift`: the running build's identity and the published release it compares against.
@@ -189,6 +190,10 @@ There is one version identity, and `scripts/version.sh` is its only source: the 
 - The app must never reload itself by gesture. `overscroll-behavior-y` is off on `html, body`, because Chrome's pull-to-refresh discarded an open dialog and everything typed into it.
 - Say what could not be reached and why. A private or Tailscale address that times out is a disconnected tunnel far more often than a broken internet connection, and "check your connection" sends the owner looking in the wrong place.
 - Add regression coverage for every corrected user-visible bug. For embedded UI failures, prefer the hosted `WKWebView` rendering test over tests that only inspect generated strings.
+- The macOS session, API token included, is stored in preferences and never in Keychain. The app is
+  ad-hoc signed, so its code identity changes on every build, and macOS ties a Keychain item to the
+  identity that wrote it: each new build was asked to unlock the login keychain for an item it had
+  written itself. Training the owner to answer that prompt is worse than where the token sits.
 - The application never updates itself without being asked. The service worker must not call `skipWaiting()` or `clientsClaim()` of its own accord: a new worker that activates mid-use reloads the page underneath whoever is typing. It downloads in the background, says it is doing so, and applies the update on a button. The macOS host works the same way, and marks the menu bar rather than interrupting.
 - The macOS application is published by the deployment, from the server the app already syncs with, and it verifies the archive against the manifest checksum before replacing itself. Fetch it with `URLSession` and never through a browser or `NSWorkspace`, or the download acquires the quarantine attribute and every update asks the owner to trust the app again. A deployment made where the application cannot be built leaves the previously published one in place rather than withdrawing the download.
 - Precache the complete built shell, including every bundled asset type, so the app opens with no connection. Cache only those files in the service worker. Never cache API responses, nutrition data, or external-provider responses there. The owner's own records live in the IndexedDB replica, which is not an HTTP cache.

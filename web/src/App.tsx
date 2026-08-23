@@ -4,7 +4,7 @@ import { cameraAvailable } from "./barcodeDetection";
 import { currentLogDate, displayDate, moveDate } from "./date";
 import pictureCreditsData from "./data/picture-credits.yaml";
 import { defaultCatalog } from "./defaultCatalog";
-import { localStore } from "./localStore";
+import { localStore, type Preferences } from "./localStore";
 import { FoodVisualPicker } from "./FoodVisualPicker";
 import { DEFAULT_FOOD_VISUAL, FoodVisual, foodVisualCatalog, isDefaultFoodVisual } from "./foodVisuals";
 import { rankFoodVisuals } from "./potion";
@@ -16,12 +16,11 @@ import { appBuild, appVersion } from "./version";
 import { SyncChip, SyncPanel } from "./SyncStatus";
 import { syncEngine } from "./sync";
 import type { StoredSession } from "./session";
-import type { EntryPlacement, ExternalFoodResult, ExternalFoodSearchResponse, ExternalFoodSource, Food, FoodEstimate, FoodInput, FoodUnit, LogEntry, Meal, Nutrition, Targets } from "./types";
-import { emptyNutrition, scaledNutrition } from "./types";
+import type { ContributionLevel, EntryPlacement, ExternalFoodResult, ExternalFoodSearchResponse, ExternalFoodSource, Food, FoodContribution, FoodEstimate, FoodInput, FoodUnit, LogEntry, Meal, Nutrition, Targets } from "./types";
+import { emptyNutrition, foodContributions, scaledNutrition } from "./types";
 
 const pictureCredits = pictureCreditsData as { source: string; url: string; authors: string[] };
 
-const EMPTY_TARGETS: Targets = { calories: null, protein: null, fat: null, carbs: null };
 const MEALS: { id: Meal; label: string }[] = [
   { id: "breakfast", label: "Breakfast" },
   { id: "lunch", label: "Lunch" },
@@ -286,13 +285,17 @@ function timeToMinutes(value: string): number {
   return hours * 60 + minutes;
 }
 
-function PreferencesForm({ initial, onSave, onClose }: { initial: number; onSave(minutes: number): Promise<void>; onClose(): void }) {
-  const [rolloverTime, setRolloverTime] = useState(minutesToTime(initial));
+function PreferencesForm({ initial, onSave, onClose }: { initial: Preferences; onSave(preferences: Preferences): Promise<void>; onClose(): void }) {
+  const [rolloverTime, setRolloverTime] = useState(minutesToTime(initial.dayRolloverMinutes));
+  const [threshold, setThreshold] = useState(initial.contributionThreshold ? String(initial.contributionThreshold) : "");
   const [saving, setSaving] = useState(false);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setSaving(true);
-    await onSave(timeToMinutes(rolloverTime)).finally(() => setSaving(false));
+    await onSave({
+      dayRolloverMinutes: timeToMinutes(rolloverTime),
+      contributionThreshold: threshold === "" ? 0 : Number(threshold)
+    }).finally(() => setSaving(false));
   };
   return (
     <Modal title="Preferences" onClose={onClose}>
@@ -301,6 +304,10 @@ function PreferencesForm({ initial, onSave, onClose }: { initial: number; onSave
           <input type="time" value={rolloverTime} onChange={(e) => setRolloverTime(e.target.value)} />
         </label>
         <p className="form-note">Entries logged before this time still count towards the previous day. Set it later than midnight if you log meals overnight.</p>
+        <label><span>Flag a food above <small>% of a daily target</small></span>
+          <input className="android-input-workaround" type="search" role="spinbutton" inputMode="numeric" autoComplete="off" enterKeyHint="done" aria-valuemin={0} aria-valuemax={100} aria-valuenow={threshold === "" ? undefined : Number(threshold)} value={threshold} onChange={(e) => { const value = e.target.value.replace(/[^0-9]/g, "").slice(0, 3); if (value === "" || Number(value) <= 100) setThreshold(value); }} />
+        </label>
+        <p className="form-note">Foods taking at least this much of your fat or carbohydrate target for the day are tinted in the log, more strongly the larger the share. Every helping of the same food that day counts towards it. Leave it empty to turn the tinting off.</p>
         <footer className="form-actions"><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving…" : "Save preferences"}</button></footer>
       </form>
     </Modal>
@@ -1018,6 +1025,33 @@ function ConnectionForm({ initial, onConnected, onCancel }: { initial?: Partial<
   </form>;
 }
 
+const MACRO_NAMES = { fat: "fat", carbs: "carbohydrate" } as const;
+type FlaggedMacro = keyof typeof MACRO_NAMES;
+
+/**
+ * A macro cell warmed in proportion to how much of the day's budget this food takes.
+ *
+ * The number printed stays the entry's own; the tint is the food's whole-day total, because a food
+ * eaten three times is one decision rather than three small ones. The title and the row's label say
+ * so, so the two readings never have to be guessed at.
+ */
+function MacroCell({ value, macro, name, contribution }: { value: number; macro: FlaggedMacro; name: string; contribution?: FoodContribution }) {
+  const level: ContributionLevel = contribution?.levels[macro] ?? 0;
+  const share = contribution?.shares[macro];
+  if (!level || share == null) return <span>{fmt(value)}</span>;
+  const helpings = contribution && contribution.count > 1 ? ` ×${contribution.count}` : "";
+  return <span className={`share-${level}`} title={`${name}${helpings} — ${Math.round(share * 100)}% of the ${MACRO_NAMES[macro]} target today`}>{fmt(value)}</span>;
+}
+
+/** Spoken after the row's action, so a flagged food announces why it stands out. */
+function shareLabel(contribution?: FoodContribution): string {
+  if (!contribution) return "";
+  return (Object.keys(MACRO_NAMES) as FlaggedMacro[])
+    .filter((macro) => contribution.levels[macro] > 0 && contribution.shares[macro] != null)
+    .map((macro) => `, ${MACRO_NAMES[macro]} ${Math.round((contribution.shares[macro] as number) * 100)} percent of target`)
+    .join("");
+}
+
 function MealTotals({ totals }: { totals: Nutrition }) {
   return <>
     <span className="meal-total" aria-label={`Protein ${fmt(totals.protein)} grams`}>{fmt(totals.protein)}</span>
@@ -1038,8 +1072,14 @@ export default function App() {
   // that brings in another device's entries repaints the day exactly like a local edit does.
   const snapshot = useSyncExternalStore(localStore.subscribe, localStore.getSnapshot);
   const syncStatus = useSyncExternalStore(syncEngine.subscribe, syncEngine.getStatus);
-  const { foods, targets, dayRolloverMinutes } = snapshot;
+  const { foods, targets, dayRolloverMinutes, contributionThreshold } = snapshot;
   const day = useMemo(() => repository.day(date), [snapshot, date]);
+  // Against the targets rather than the running day total, so a row's flag is settled the moment it
+  // is logged and no later entry restates the ones above it.
+  const contributions = useMemo(
+    () => foodContributions(day.entries, targets, contributionThreshold),
+    [day, targets, contributionThreshold]
+  );
   // Independent of whatever date the log is navigated to, for the native menu-bar summary.
   const menuDate = currentLogDate(dayRolloverMinutes);
   const menuDay = useMemo(() => repository.day(menuDate), [snapshot, menuDate]);
@@ -1220,8 +1260,8 @@ export default function App() {
   const saveTargets = async (next: Targets) => {
     try { await repository.saveTargets(next); setModal(null); } catch (e) { reportError(e); }
   };
-  const saveDayRollover = async (minutes: number) => {
-    try { await repository.saveDayRollover(minutes); setModal(null); } catch (e) { reportError(e); }
+  const savePreferences = async (preferences: Preferences) => {
+    try { await repository.savePreferences(preferences); setModal(null); } catch (e) { reportError(e); }
   };
   const signOut = async () => {
     setConnectionDefaults({ baseUrl: session?.baseUrl, email: session?.email });
@@ -1300,6 +1340,7 @@ export default function App() {
               <div id={`meal-entries-${meal.id}`} hidden={collapsed} className={`meal-entries ${dropTarget?.meal === meal.id && dropTarget.position === "end" ? "drop-at-end" : ""}`}>
                 {entries.map((entry) => {
                   const indicator = dropTarget?.entryId === entry.id ? `drop-${dropTarget.position}` : "";
+                  const contribution = contributions.get(entry.foodId);
                   return <div className={`food-row ${selecting ? "is-selecting" : ""} ${reordering ? "is-reordering" : ""} ${selected.has(entry.id) ? "is-selected" : ""} ${dragging === entry.id ? "is-dragged" : ""} ${indicator}`} role="row" key={entry.id} data-drop-entry={entry.id} data-meal={meal.id} draggable={reordering}
                     onDragStart={(event) => { if (!reordering) return; event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", entry.id); setDragging(entry.id); }}
                     onDragEnd={() => reordering && finishDrag(entry.id)}
@@ -1314,9 +1355,12 @@ export default function App() {
                     }}
                     onDrop={(event) => { event.preventDefault(); finishDrag(event.dataTransfer.getData("text/plain") || dragging || "", dropTargetRef.current); }}>
                     {selecting && <label className="check-cell" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected.has(entry.id)} onChange={() => toggleSelected(entry.id)} aria-label={`Select ${entry.name}`} /></label>}
-                    <button className="food-entry-main" onClick={() => selecting ? toggleSelected(entry.id) : !reordering && edit(entry)} aria-label={selecting ? `Select ${entry.name}` : reordering ? `Reorder ${entry.name}` : `Edit ${entry.name}`}>
+                    <button className="food-entry-main" onClick={() => selecting ? toggleSelected(entry.id) : !reordering && edit(entry)} aria-label={`${selecting ? `Select ${entry.name}` : reordering ? `Reorder ${entry.name}` : `Edit ${entry.name}`}${shareLabel(contribution)}`}>
                       <span className="food-name-cell"><FoodVisual value={entry.icon} className="food-icon" label={entry.name} /><span className="food-name-text">{entry.name}</span></span>
-                      <span>{fmt(entry.amount)}</span><span>{fmt(entry.protein)}</span><span>{fmt(entry.fat)}</span><span>{fmt(entry.carbs)}</span><span className="energy-cell">{fmt(entry.calories, true)}</span>
+                      <span>{fmt(entry.amount)}</span><span>{fmt(entry.protein)}</span>
+                      <MacroCell value={entry.fat} macro="fat" name={entry.name} contribution={contribution} />
+                      <MacroCell value={entry.carbs} macro="carbs" name={entry.name} contribution={contribution} />
+                      <span className="energy-cell">{fmt(entry.calories, true)}</span>
                     </button>
                   </div>;
                 })}
@@ -1329,7 +1373,7 @@ export default function App() {
 
     {modal === "add" && <AddFoodModal date={date} foods={foods} entry={editingEntry} initialMeal={addMeal} onClose={() => { setModal(null); setEditingEntry(undefined); }} reportError={reportError} />}
     {modal === "targets" && <TargetsForm initial={targets} onSave={saveTargets} onClose={() => setModal(null)} />}
-    {modal === "preferences" && <PreferencesForm initial={dayRolloverMinutes} onSave={saveDayRollover} onClose={() => setModal(null)} />}
+    {modal === "preferences" && <PreferencesForm initial={{ dayRolloverMinutes, contributionThreshold }} onSave={savePreferences} onClose={() => setModal(null)} />}
     {modal === "copy" && <Modal title="Copy selected entries" onClose={() => setModal(null)}><div className="stack-form"><p className="form-note">The selected entries will be appended to the destination day in their current meal sections.</p><label><span>Destination date</span><input type="date" value={copyDate} onChange={(e) => setCopyDate(e.target.value)} /></label><footer className="form-actions"><button className="quiet-button" onClick={() => setModal(null)}>Cancel</button><button className="primary-button" onClick={copySelected}>Copy {selected.size} {selected.size === 1 ? "entry" : "entries"}</button></footer></div></Modal>}
     {modal === "export" && <ExportModal date={date} onClose={() => setModal(null)} reportError={reportError} />}
     {modal === "connection" && <Modal title="Connection" onClose={() => setModal(null)}><ConnectionForm initial={session} onCancel={() => setModal(null)} onConnected={(connected) => { backendSession.configure(connected, requireLogin); setSession(connected); setModal(null); }} /><div className="connection-signout">

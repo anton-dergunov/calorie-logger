@@ -8,7 +8,7 @@ Three layers, deliberately separated:
 |---|---|
 | `web/` | The Vite + React + TypeScript app: the whole interface, the complete local replica of your data, every operation over it, and the sync engine. |
 | `pocketbase/` | The pinned server: one canonical schema bootstrap plus later migrations, and hooks implementing authentication, the `/sync` merge, external food search, and the portion estimate. It stores and merges records; it does not compute days, ordering, or exports. |
-| `macos/` | A thin Swift/AppKit host: the window, the menu bar item and popover, Keychain session storage, the export save panel, the updater, and a small typed bridge. |
+| `macos/` | A thin Swift/AppKit host: the window, the menu bar item and popover, session storage, the export save panel, the updater, and a small typed bridge. |
 
 The macOS app bundles `web/dist` and serves it to `WKWebView` over the `calorie-logger://app`
 origin. It must not go back to `loadHTMLString` with a `file://` base URL: a `file://` page has no

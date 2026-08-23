@@ -6,6 +6,7 @@ import { localStore } from "./localStore";
 import { backendSession, CalorieLoggerApiError, repository } from "./repository";
 import { syncEngine } from "./sync";
 import type { ExternalFoodSearchResponse, Food, LogEntry, Meal, StoredEntry, SyncFields, Targets } from "./types";
+import { DEFAULT_CONTRIBUTION_THRESHOLD } from "./types";
 import { foodVisualCatalog } from "./foodVisuals";
 
 afterEach(async () => {
@@ -32,7 +33,7 @@ function syncFields(editedAt = "2026-08-15T00:00:00.000Z"): SyncFields {
  * Entries are given as the interface shows them; the saved food each one needs is derived back
  * out of the entry when the test has not declared it.
  */
-async function seed(data: { day?: { date?: string; entries: LogEntry[]; totals?: unknown }; targets?: Targets; foods?: FoodFixture[] } = {}) {
+async function seed(data: { day?: { date?: string; entries: LogEntry[]; totals?: unknown }; targets?: Targets; foods?: FoodFixture[]; contributionThreshold?: number } = {}) {
   await localStore.clear();
   await localStore.load("test-owner");
   const foods = new Map<string, Food>((data.foods ?? []).map((food) => [food.id, { oneOff: false, ...food, ...syncFields() }]));
@@ -50,7 +51,9 @@ async function seed(data: { day?: { date?: string; entries: LogEntry[]; totals?:
       sortIndex: item.sortIndex, amount: item.amount, ...syncFields()
     };
   });
-  const settings = data.targets ? { id: "settings", targets: data.targets, dayRolloverMinutes: 0, ...syncFields() } : null;
+  const settings = data.targets
+    ? { id: "settings", targets: data.targets, dayRolloverMinutes: 0, contributionThreshold: data.contributionThreshold ?? DEFAULT_CONTRIBUTION_THRESHOLD, ...syncFields() }
+    : null;
   await localStore.applyRemote({ foods: [...foods.values()], entries, settings }, 1, "2026-08-15T00:00:00.000Z");
 }
 
@@ -1178,5 +1181,107 @@ describe("calorie log design", () => {
     expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Continue in browser" }));
     expect(await screen.findByRole("button", { name: "Add food to Breakfast" })).not.toBeNull();
+  });
+});
+
+describe("high-contribution foods", () => {
+  const TARGETS = { calories: 1820, protein: 120, fat: 60, carbs: 200 };
+
+  function helping(id: string, foodId: string, name: string, sortIndex: number, macros: { fat: number; carbs: number }, amount = 100): LogEntry {
+    return {
+      id, foodId, date: localDateString(), name, icon: "pic:apple", amount, basisAmount: amount,
+      unit: "g", calories: 0, protein: 0, ...macros, sortIndex, meal: "breakfast",
+      createdAt: "2026-08-15T00:00:00.000Z", editedAt: "2026-08-15T00:00:00.000Z"
+    };
+  }
+
+  const bananas = [0, 1, 2].map((index) => helping(`banana-${index}`, "banana", "Banana", index, { fat: 0.4, carbs: 27 }, 118));
+  const oliveOil = helping("olive-oil-0", "olive-oil", "Olive oil", 3, { fat: 14, carbs: 0 }, 14);
+
+  const cells = (button: HTMLElement) => Array.from(button.children) as HTMLElement[];
+
+  it("weighs a food by its whole day, so repeated helpings stop hiding behind one another", async () => {
+    await seed({
+      day: { date: localDateString(), entries: bananas, totals: {} },
+      targets: TARGETS, foods: []
+    });
+    render(<App />);
+
+    // 27g of carbohydrate a time is unremarkable; 81g against a 200g target is not, and every row of
+    // the food says so, which is the whole point of judging the food rather than the helping.
+    const rows = await screen.findAllByRole("button", { name: /^Edit Banana/ });
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(cells(row)[4].className).toBe("share-2");
+      expect(cells(row)[4].getAttribute("title")).toBe("Banana ×3 — 41% of the carbohydrate target today");
+      expect(cells(row)[4].textContent).toBe("27.0");
+      // Fat is nowhere near its target, and protein is never flagged at all.
+      expect(cells(row)[3].className).toBe("");
+      expect(cells(row)[2].className).toBe("");
+    }
+  });
+
+  it("flags a single heavy portion on its own, without counting a helping it does not have", async () => {
+    await seed({
+      day: { date: localDateString(), entries: [bananas[0], oliveOil], totals: {} },
+      targets: TARGETS, foods: []
+    });
+    render(<App />);
+
+    const oil = await screen.findByRole("button", { name: /^Edit Olive oil/ });
+    expect(cells(oil)[3].className).toBe("share-1");
+    expect(cells(oil)[3].getAttribute("title")).toBe("Olive oil — 23% of the fat target today");
+    // One banana is 14% of the carbohydrate target and stays quiet.
+    const banana = screen.getByRole("button", { name: /^Edit Banana/ });
+    expect(cells(banana)[4].className).toBe("");
+  });
+
+  it("says why a row stands out, for a reader who cannot see the tint", async () => {
+    await seed({
+      day: { date: localDateString(), entries: [...bananas, oliveOil], totals: {} },
+      targets: TARGETS, foods: []
+    });
+    render(<App />);
+
+    await screen.findAllByRole("button", { name: "Edit Banana, carbohydrate 41 percent of target" });
+    screen.getByRole("button", { name: "Edit Olive oil, fat 23 percent of target" });
+  });
+
+  it("flags nothing without a target to measure against", async () => {
+    await seed({
+      day: { date: localDateString(), entries: bananas, totals: {} },
+      targets: { calories: null, protein: null, fat: null, carbs: null }, foods: []
+    });
+    render(<App />);
+
+    const rows = await screen.findAllByRole("button", { name: /^Edit Banana/ });
+    expect(rows.map((row) => cells(row)[4].className)).toEqual(["", "", ""]);
+  });
+
+  it("flags nothing once the owner turns the tinting off", async () => {
+    await seed({
+      day: { date: localDateString(), entries: bananas, totals: {} },
+      targets: TARGETS, foods: [], contributionThreshold: 0
+    });
+    render(<App />);
+
+    const rows = await screen.findAllByRole("button", { name: /^Edit Banana/ });
+    expect(rows.map((row) => cells(row)[4].className)).toEqual(["", "", ""]);
+  });
+
+  it("saves a changed threshold alongside the day rollover", async () => {
+    await seed({ day: { date: localDateString(), entries: [], totals: {} }, targets: TARGETS, foods: [] });
+    const savePreferences = vi.spyOn(repository, "savePreferences");
+    render(<App />);
+
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Preferences/ }));
+    const threshold = screen.getByRole("spinbutton") as HTMLInputElement;
+    expect(threshold.value).toBe("20");
+    fireEvent.change(threshold, { target: { value: "35" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save preferences" }));
+
+    await waitFor(() => expect(savePreferences).toHaveBeenCalledWith({ dayRolloverMinutes: 0, contributionThreshold: 35 }));
   });
 });

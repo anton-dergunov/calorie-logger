@@ -3,6 +3,7 @@ import { localDateString, moveDate } from "./date";
 import { defaultCatalog } from "./defaultCatalog";
 import { localStore } from "./localStore";
 import type { Food, FoodInput, StoredEntry, SyncFields } from "./types";
+import { DEFAULT_CONTRIBUTION_THRESHOLD } from "./types";
 
 const TODAY = localDateString();
 const YESTERDAY = moveDate(TODAY, -1);
@@ -225,6 +226,25 @@ describe("targets and export", () => {
     expect(ranged.entries).toHaveLength(1);
     expect(ranged.foods.map((item) => item.id)).toEqual([food.id]);
   });
+
+  it("keeps the preferences and the targets on one record, so neither write clears the other", async () => {
+    await localStore.saveTargets({ calories: 1820, protein: 120, fat: 60, carbs: 200 });
+    await localStore.savePreferences({ dayRolloverMinutes: 240, contributionThreshold: 30 });
+
+    expect(localStore.getSnapshot().dayRolloverMinutes).toBe(240);
+    expect(localStore.getSnapshot().contributionThreshold).toBe(30);
+    expect(localStore.getSnapshot().targets.calories).toBe(1820);
+
+    await localStore.saveTargets({ calories: 2000, protein: 130, fat: 65, carbs: 210 });
+    expect(localStore.getSnapshot().contributionThreshold).toBe(30);
+    expect(localStore.getSnapshot().dayRolloverMinutes).toBe(240);
+  });
+
+  it("carries a changed preference to the owner's other devices", async () => {
+    await localStore.savePreferences({ dayRolloverMinutes: 0, contributionThreshold: 0 });
+    expect(localStore.getSnapshot().contributionThreshold).toBe(0);
+    expect(localStore.pendingChanges().settings?.contributionThreshold).toBe(0);
+  });
 });
 
 describe("replication", () => {
@@ -375,6 +395,7 @@ describe("resetting and seeding", () => {
     expect(pending.foods.find((item) => item.name === "Leftover pizza")?.deleted).toBe(true);
     expect(pending.entries.every((entry) => entry.deleted)).toBe(true);
     expect(pending.settings?.targets.calories).toBeNull();
+    expect(pending.settings?.contributionThreshold).toBe(DEFAULT_CONTRIBUTION_THRESHOLD);
   });
 
   it("brings a catalogue food back after an earlier reset tombstoned it", async () => {
