@@ -269,3 +269,87 @@ private final class FirstRunBridge: NSObject, WKScriptMessageHandlerWithReply {
         replyHandler(["data": NSNull()], nil)
     }
 }
+
+/// Serves a canned manifest so the update check can be exercised without a server.
+final class StubURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var body = Data()
+    nonisolated(unsafe) static var status = 200
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: Self.status, httpVersion: "HTTP/1.1", headerFields: nil
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+final class UpdateCheckTests: XCTestCase {
+    @MainActor
+    private func service(manifest: String) throws -> (UpdateService, UserDefaults, String) {
+        let suite = "CalorieLoggerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.set("https://calorie-logger.example.test", forKey: "CalorieLoggerBackendBaseURL")
+        StubURLProtocol.body = Data(manifest.utf8)
+        StubURLProtocol.status = 200
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        return (UpdateService(defaults: defaults, session: URLSession(configuration: configuration)), defaults, suite)
+    }
+
+    private func manifest(build: String) -> String {
+        """
+        {"data":{"version":"1.0.0","build":"\(build)","file":"CalorieLogger.zip","size":10,
+        "sha256":"abc","url":"/api/calorie-logger/downloads/CalorieLogger.zip"}}
+        """
+    }
+
+    /// The bug this replaces: an explicit check that found an update set the menu-bar mark and
+    /// returned in silence, so the menu item looked broken exactly when it had most to say.
+    @MainActor
+    func testExplicitCheckReportsAnAvailableUpdateRatherThanReturningSilently() async throws {
+        let (updates, defaults, suite) = try service(manifest: manifest(build: "999999999999"))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        await updates.check(force: true)
+
+        XCTAssertEqual(updates.available?.build, "999999999999")
+        XCTAssertEqual(updates.state, .idle)
+        XCTAssertNotNil(updates.lastCheck)
+    }
+
+    @MainActor
+    func testExplicitCheckSaysSoWhenThereIsNothingNewer() async throws {
+        let (updates, defaults, suite) = try service(manifest: manifest(build: "1"))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        await updates.check(force: true)
+
+        XCTAssertNil(updates.available)
+        XCTAssertEqual(updates.statusMessage, "Calorie Logger is up to date.")
+    }
+
+    /// Installing without being asked is opt-in: an update that replaces the application on its own
+    /// is a decision the owner makes once, not a default they discover afterwards.
+    @MainActor
+    func testAutomaticInstallIsOffUntilItIsTurnedOn() async throws {
+        let (updates, defaults, suite) = try service(manifest: manifest(build: "1"))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertFalse(updates.automaticInstall)
+        XCTAssertTrue(updates.automaticChecks)
+        updates.automaticInstall = true
+        XCTAssertTrue(defaults.bool(forKey: "CalorieLoggerAutomaticUpdateInstall"))
+    }
+
+    @MainActor
+    func testDownloadProgressIsPartOfTheStateSoItCanBeShown() {
+        XCTAssertNotEqual(UpdateService.State.downloading(0.1), .downloading(0.9))
+        XCTAssertEqual(UpdateService.State.downloading(0.5), .downloading(0.5))
+    }
+}

@@ -16,7 +16,10 @@ final class UpdateService: ObservableObject {
     enum State: Equatable {
         case idle
         case checking
-        case downloading
+        /// Carries the fraction received, so a slow server looks like it is working rather than
+        /// like it has hung. A download with no progress was read as a stuck update, and waiting
+        /// on it with nothing moving is the one thing the old updater got most wrong.
+        case downloading(Double)
         case installing
         case failed(String)
     }
@@ -24,6 +27,7 @@ final class UpdateService: ObservableObject {
     private enum Keys {
         static let baseURL = "CalorieLoggerBackendBaseURL"
         static let automatic = "CalorieLoggerAutomaticUpdateChecks"
+        static let automaticInstall = "CalorieLoggerAutomaticUpdateInstall"
         static let lastCheck = "CalorieLoggerLastUpdateCheck"
     }
 
@@ -33,12 +37,20 @@ final class UpdateService: ObservableObject {
 
     @Published private(set) var available: MacRelease?
     @Published private(set) var state: State = .idle
+    /// Published as well as stored, so "Last checked" refreshes the moment a check finishes.
+    @Published private(set) var lastCheck: Date?
+    /// What an explicit check concluded when there was nothing to offer. Cleared by the next check.
+    @Published private(set) var statusMessage: String?
 
     var onAvailabilityChanged: ((MacRelease?) -> Void)?
+    /// Asked before a relaunch that the owner did not just click for. An automatic install still
+    /// never restarts the application underneath whoever is using it.
+    var confirmRestart: ((MacRelease) -> Bool)?
 
     private let defaults: UserDefaults
     private let session: URLSession
     private var timer: Timer?
+    private var progressObservation: NSKeyValueObservation?
 
     init(defaults: UserDefaults = .standard, session: URLSession = .shared) {
         self.defaults = defaults
@@ -46,13 +58,32 @@ final class UpdateService: ObservableObject {
         if defaults.object(forKey: Keys.automatic) == nil {
             defaults.set(true, forKey: Keys.automatic)
         }
+        lastCheck = defaults.object(forKey: Keys.lastCheck) as? Date
     }
 
     var automaticChecks: Bool {
         get { defaults.bool(forKey: Keys.automatic) }
         set {
+            objectWillChange.send()
             defaults.set(newValue, forKey: Keys.automatic)
             if newValue { start() } else { timer?.invalidate() }
+        }
+    }
+
+    /// Off by default. Replacing the application is the owner's decision to make the first time;
+    /// this only removes the second click once they have said they would rather not make it.
+    var automaticInstall: Bool {
+        get { defaults.bool(forKey: Keys.automaticInstall) }
+        set {
+            objectWillChange.send()
+            defaults.set(newValue, forKey: Keys.automaticInstall)
+        }
+    }
+
+    var isBusy: Bool {
+        switch state {
+        case .checking, .downloading, .installing: return true
+        case .idle, .failed: return false
         }
     }
 
@@ -69,19 +100,24 @@ final class UpdateService: ObservableObject {
         self.timer = timer
     }
 
-    /// `force` is a person asking, so it reports "you are up to date" instead of staying silent,
-    /// and it ignores both the interval and the automatic-checks setting.
+    /// `force` is a person asking, so it always reports what it found and ignores both the interval
+    /// and the automatic-checks setting.
+    ///
+    /// Every outcome has to say something. An explicit check that found an update used to set the
+    /// menu-bar mark and return in silence, so the menu item read as broken to anyone who clicked
+    /// it while an update was in fact waiting.
     func check(force: Bool) async {
+        guard state != .checking else { return }
         if !force {
             guard automaticChecks, !AppVersion.isDevelopmentBuild else { return }
-            if let last = defaults.object(forKey: Keys.lastCheck) as? Date,
-               Date().timeIntervalSince(last) < Self.checkInterval - 60 { return }
+            if let last = lastCheck, Date().timeIntervalSince(last) < Self.checkInterval - 60 { return }
         }
         guard let manifestURL = serverURL(path: "/api/calorie-logger/v5/mac-release") else {
             if force { state = .failed("Sign in first, so Calorie Logger knows which server to ask.") }
             return
         }
 
+        statusMessage = nil
         state = .checking
         do {
             var request = URLRequest(url: manifestURL)
@@ -91,18 +127,26 @@ final class UpdateService: ObservableObject {
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 throw UpdateFailure.message("The server did not answer the update check.")
             }
-            defaults.set(Date(), forKey: Keys.lastCheck)
+            let now = Date()
+            defaults.set(now, forKey: Keys.lastCheck)
+            lastCheck = now
             let offered = try JSONDecoder().decode(MacRelease.Envelope.self, from: data).data
             let newer = offered.flatMap { $0.isNewer(than: AppVersion.build) ? $0 : nil }
             available = newer
             onAvailabilityChanged?(newer)
             state = .idle
-            if force, newer == nil { notify(title: "Calorie Logger is up to date", body: "You are running \(AppVersion.label).") }
+            if newer == nil {
+                statusMessage = "Calorie Logger is up to date."
+            } else if !force, automaticInstall {
+                // Found by the timer with automatic installing on: take it now, and ask only before
+                // the restart, which is the one part that interrupts.
+                await install()
+            }
         } catch {
             available = nil
             onAvailabilityChanged?(nil)
             state = force ? State.failed(describe(error)) : State.idle
-            if force { notify(title: "Could not check for updates", body: describe(error)) }
+            if !force { statusMessage = nil }
         }
     }
 
@@ -130,16 +174,29 @@ final class UpdateService: ObservableObject {
             return
         }
 
-        state = .downloading
+        state = .downloading(0)
         do {
             let archive = try await download(downloadURL, expecting: release)
-            defer { try? FileManager.default.removeItem(at: archive) }
             state = .installing
-            let replacement = try expand(archive)
-            defer { try? FileManager.default.removeItem(at: replacement.deletingLastPathComponent()) }
-            // `replaceItemAt` swaps the whole directory, so files that a release removed do not
-            // linger inside the bundle the way a merging copy would leave them.
-            _ = try FileManager.default.replaceItemAt(bundle, withItemAt: replacement)
+            // Verifying, expanding, and swapping the bundle are file work, not interface work.
+            // Running them on the main actor froze the window mid-update: the progress the owner was
+            // watching stopped moving at whatever it last said, which reads exactly like a hang.
+            try await Task.detached(priority: .userInitiated) {
+                defer { try? FileManager.default.removeItem(at: archive) }
+                // The archive travelled over the network from a server that may be reached over
+                // plain HTTP inside a private network. Verifying it against the manifest is what
+                // makes replacing the running application with its contents a safe thing to do.
+                try Self.verify(archive, matches: release.sha256)
+                let replacement = try Self.expand(archive)
+                defer { try? FileManager.default.removeItem(at: replacement.deletingLastPathComponent()) }
+                // `replaceItemAt` swaps the whole directory, so files that a release removed do not
+                // linger inside the bundle the way a merging copy would leave them.
+                _ = try FileManager.default.replaceItemAt(bundle, withItemAt: replacement)
+            }.value
+            state = .idle
+            available = nil
+            onAvailabilityChanged?(nil)
+            guard confirmRestart?(release) ?? true else { return }
             relaunch(at: bundle)
         } catch {
             state = .failed(describe(error))
@@ -149,31 +206,55 @@ final class UpdateService: ObservableObject {
 
     // MARK: - Steps
 
+    /// Downloads to a file, reporting the fraction received as it arrives.
+    ///
+    /// A download task rather than `AsyncBytes`: iterating a six-megabyte body one byte at a time
+    /// costs more than fetching it does, so the progress would have been paid for by making the
+    /// thing it measures slower. `URLSession` writes straight to disk and `Progress` reports itself.
     private func download(_ url: URL, expecting release: MacRelease) async throws -> URL {
         var request = URLRequest(url: url)
-        request.timeoutInterval = 120
-        let (temporary, response) = try await session.download(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            try? FileManager.default.removeItem(at: temporary)
-            throw UpdateFailure.message("The update could not be downloaded from the server.")
-        }
+        request.timeoutInterval = 300
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("CalorieLoggerUpdate-\(UUID().uuidString).zip")
-        try FileManager.default.moveItem(at: temporary, to: destination)
+        defer { progressObservation = nil }
 
-        // The archive travelled over the network from a server that may be reached over plain
-        // HTTP inside a private network. Verifying it against the manifest is what makes replacing
-        // the running application with its contents a safe thing to do.
-        let digest = SHA256.hash(data: try Data(contentsOf: destination, options: .mappedIfSafe))
-        let checksum = digest.map { String(format: "%02x", $0) }.joined()
-        guard checksum.caseInsensitiveCompare(release.sha256) == .orderedSame else {
-            try? FileManager.default.removeItem(at: destination)
-            throw UpdateFailure.message("The downloaded update did not match the server's checksum and was discarded.")
+        return try await withCheckedThrowingContinuation { continuation in
+            let task = session.downloadTask(with: request) { location, response, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let location,
+                      let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    continuation.resume(throwing: UpdateFailure.message("The update could not be downloaded from the server."))
+                    return
+                }
+                // The temporary file is deleted the moment this handler returns, so it has to be
+                // moved here rather than anywhere further along.
+                do {
+                    try FileManager.default.moveItem(at: location, to: destination)
+                    continuation.resume(returning: destination)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+            progressObservation = task.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
+                let fraction = progress.fractionCompleted
+                Task { @MainActor in self?.state = .downloading(fraction) }
+            }
+            task.resume()
         }
-        return destination
     }
 
-    private func expand(_ archive: URL) throws -> URL {
+    private nonisolated static func verify(_ archive: URL, matches expected: String) throws {
+        let digest = SHA256.hash(data: try Data(contentsOf: archive, options: .mappedIfSafe))
+        let checksum = digest.map { String(format: "%02x", $0) }.joined()
+        guard checksum.caseInsensitiveCompare(expected) == .orderedSame else {
+            throw UpdateFailure.message("The downloaded update did not match the server's checksum and was discarded.")
+        }
+    }
+
+    private nonisolated static func expand(_ archive: URL) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("CalorieLoggerUpdate-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

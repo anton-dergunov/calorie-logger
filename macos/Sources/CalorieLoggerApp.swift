@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         // Deliberately last, and never awaited: the server may be unreachable, and opening the log
         // must not wait on anything that talks to it.
         updates.onAvailabilityChanged = { [weak self] release in self?.menuBar.setUpdateAvailable(release) }
+        updates.confirmRestart = { [weak self] release in self?.confirmRestart(for: release) ?? true }
         updates.start()
     }
 
@@ -242,6 +243,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         }
     }
 
+    /// An update installed without being clicked for still asks before the restart, because
+    /// relaunching underneath someone mid-entry is the thing the application must never do.
+    private func confirmRestart(for release: MacRelease) -> Bool {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Calorie Logger has been updated"
+        alert.informativeText = "Build \(release.build) is installed and starts the next time Calorie Logger opens."
+        alert.addButton(withTitle: "Restart Now")
+        alert.addButton(withTitle: "Later")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     private func showPreferences() {
         preferences.show(
             updates: updates,
@@ -255,7 +269,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     @objc private func preferencesMenu() { showPreferences() }
 
+    /// Opens Settings and checks there rather than checking in silence. The menu item used to set
+    /// the menu-bar mark and say nothing at all when an update was waiting, which is indistinguishable
+    /// from the item being broken.
     @objc private func checkForUpdatesMenu() {
+        showPreferences()
         Task { [weak self] in await self?.updates.check(force: true) }
     }
 

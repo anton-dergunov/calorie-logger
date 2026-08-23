@@ -36,62 +36,106 @@ enum LoginItem {
 struct PreferencesView: View {
     @ObservedObject var updates: UpdateService
     @State private var openAtLogin = LoginItem.isEnabled
-    @State private var automaticChecks: Bool
 
     let checkNow: () -> Void
     let installUpdate: () -> Void
 
-    init(updates: UpdateService, checkNow: @escaping () -> Void, installUpdate: @escaping () -> Void) {
-        self.updates = updates
-        self.checkNow = checkNow
-        self.installUpdate = installUpdate
-        _automaticChecks = State(initialValue: updates.automaticChecks)
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle("Open Calorie Logger at login", isOn: $openAtLogin)
-                    .onChange(of: openAtLogin) { _, value in
-                        LoginItem.setEnabled(value)
-                        openAtLogin = LoginItem.isEnabled
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 3) {
+                Toggle(isOn: $openAtLogin) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Open Calorie Logger at login")
+                        Text("The menu bar shows today's totals only while Calorie Logger is running.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                Text("The menu bar shows today's totals only while Calorie Logger is running.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                }
+                .toggleStyle(.switch)
+                .onChange(of: openAtLogin) { _, value in
+                    LoginItem.setEnabled(value)
+                    openAtLogin = LoginItem.isEnabled
+                }
             }
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle("Check for updates automatically", isOn: $automaticChecks)
-                    .onChange(of: automaticChecks) { _, value in updates.automaticChecks = value }
-                HStack(spacing: 10) {
-                    Text("Version \(AppVersion.label)").foregroundStyle(.secondary)
-                    Spacer()
-                    switch updates.state {
-                    case .checking:
-                        Text("Checking…").foregroundStyle(.secondary)
-                    case .downloading:
-                        Text("Downloading…").foregroundStyle(.secondary)
-                    case .installing:
-                        Text("Installing…").foregroundStyle(.secondary)
-                    case .failed(let message):
-                        Text(message).foregroundStyle(.red).lineLimit(2)
-                    case .idle:
-                        if let release = updates.available {
-                            Button("Update to \(release.version)", action: installUpdate)
-                                .buttonStyle(.borderedProminent)
-                        } else {
-                            Button("Check Now", action: checkNow)
-                        }
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Updates").font(.headline)
+
+                Toggle(isOn: Binding(get: { updates.automaticChecks }, set: { updates.automaticChecks = $0 })) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Check for updates automatically")
+                        Text("Looks for a new release on your Calorie Logger server every few hours.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
+                .toggleStyle(.switch)
+
+                Toggle(isOn: Binding(get: { updates.automaticInstall }, set: { updates.automaticInstall = $0 })) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Install updates automatically")
+                        Text("Downloads and applies an update in the background; still asks before restarting.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+                .disabled(!updates.automaticChecks)
+
+                HStack(spacing: 10) {
+                    Button(isChecking ? "Checking…" : "Check Now", action: checkNow)
+                        .disabled(updates.isBusy)
+                    status
+                }
                 .font(.callout)
+
+                Text("Version \(AppVersion.label)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(24)
-        .frame(width: 420)
+        .frame(width: 460, alignment: .leading)
+    }
+
+    private var isChecking: Bool { updates.state == .checking }
+
+    @ViewBuilder
+    private var status: some View {
+        switch updates.state {
+        case .downloading(let fraction):
+            ProgressView(value: fraction)
+                .frame(width: 90)
+            Text("Downloading \(Int(fraction * 100))%")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .installing:
+            ProgressView().controlSize(.small)
+            Text("Installing…").font(.caption).foregroundStyle(.secondary)
+        case .failed(let message):
+            Text(message).font(.caption).foregroundStyle(.red).lineLimit(3)
+        case .checking:
+            ProgressView().controlSize(.small)
+        case .idle:
+            if let release = updates.available {
+                // Named by build, not by version: a deployment that did not bump the version still
+                // ships a new application, and "Update to 1.0.0" while running 1.0.0 says nothing.
+                Text("Build \(release.build) is available")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Button("Update Now", action: installUpdate)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            } else if let message = updates.statusMessage {
+                Text(message).font(.caption).foregroundStyle(.secondary)
+            } else if let date = updates.lastCheck {
+                Text("Last checked: \(date.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
@@ -109,6 +153,7 @@ final class PreferencesWindowController {
         let controller = NSHostingController(
             rootView: PreferencesView(updates: updates, checkNow: checkNow, installUpdate: installUpdate)
         )
+        controller.sizingOptions = [.preferredContentSize]
         let window = NSWindow(contentViewController: controller)
         window.title = "Calorie Logger Settings"
         window.styleMask = [.titled, .closable]
