@@ -93,12 +93,15 @@ docker exec -it calorie-logger-pocketbase \
   /pb/pocketbase superuser upsert 'you@example.com' 'A_STRONG_UNIQUE_PASSWORD'
 ```
 
+If your shell account isn't in the `docker` group, prefix that command with `sudo`.
+
 Then open `/_/` in a browser, sign in with those details, open the `users` collection, and create
 your own account there. That second account is the one you sign into Calorie Logger with — never
 the administrator one.
 
-Sign in at the server's address. The web app takes the server from the page it is served from, so
-it only asks for an email and a password.
+Sign in at the server's address — the same one `./deploy.sh` printed, such as
+`http://127.0.0.1:8090`. The web app takes the server from the page it is served from, so it only
+asks for an email and a password.
 
 ## Install the apps
 

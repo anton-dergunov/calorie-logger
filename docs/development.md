@@ -129,7 +129,7 @@ To cut a new version, edit `version` in the root `package.json` and deploy.
   artwork is restricted to it, and it is all vegan. Masters live in the untracked `icons/`
   directory; `npm run generate:pictures` writes the bundled WebP set and the server's allowlist and
   refuses to run while the two disagree. Never edit a generated picture or the allowlist by hand,
-  and add attribution for new third-party artwork to `attributions.txt` and
+  and add attribution for new third-party artwork to `web/src/data/picture-credits.yaml` and
   `THIRD_PARTY_NOTICES.md`.
 - The server-side generic food catalogue is rebuilt with
   `python3 scripts/prepare_cofid.py path/to/cofid.xlsx pocketbase/pb_hooks/data/cofid-2021.json`.

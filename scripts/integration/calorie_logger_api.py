@@ -22,7 +22,7 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 API = "/api/calorie-logger/v5"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
@@ -214,6 +214,7 @@ def main() -> int:
             pushed = sync(base, first, phone, foods=[food(oats_id, "Oats", instant(10))],
                           entries=[entry(entry_id, oats_id, "2026-08-20", instant(11))],
                           settings={"targets": {"calories": 2000, "protein": 125, "fat": None, "carbs": 250},
+                                    "dayRolloverMinutes": 0,
                                     "createdAt": instant(0), "editedAt": instant(12)})
             assert pushed["rejected"] == []
             assert by_id(pushed["changes"]["foods"])[oats_id]["name"] == "Oats"

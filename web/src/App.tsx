@@ -584,11 +584,6 @@ function AboutPanel({ update, macApp, onUpdate }: {
       Calorie Logger is self-hosted and stores your log only on your own server and your own devices.
       Nothing about your food is sent anywhere else.
     </p>
-  </div>;
-}
-
-function PictureCredits() {
-  return <div className="stack-form">
     <p className="form-note">
       The {foodVisualCatalog.length} bundled food pictures come from <a href={pictureCredits.url} target="_blank" rel="noreferrer">{pictureCredits.source}</a>, with the rest drawn for Calorie Logger.
       They are stored in the app, so pictures work offline and nothing about your food is sent anywhere to show them.
@@ -1049,7 +1044,7 @@ export default function App() {
   const menuDate = currentLogDate(dayRolloverMinutes);
   const menuDay = useMemo(() => repository.day(menuDate), [snapshot, menuDate]);
   const loading = !snapshot.ready;
-  const [modal, setModal] = useState<"add" | "targets" | "preferences" | "copy" | "export" | "connection" | "settings" | "sync" | "reset" | "credits" | "about" | null>(null);
+  const [modal, setModal] = useState<"add" | "targets" | "preferences" | "copy" | "export" | "connection" | "settings" | "sync" | "reset" | "about" | null>(null);
   const [update, setUpdate] = useState<UpdateStage | undefined>(() => updateStage());
   const [macApp, setMacApp] = useState<MacReleaseInfo | null>(null);
   const [macBannerDismissed, setMacBannerDismissed] = useState(() => localStorage.getItem("calorie-logger-mac-offer-dismissed") === "true");
@@ -1355,7 +1350,6 @@ export default function App() {
       <button onClick={() => setModal("export")}><span>Export data</span><small>Save a JSON backup</small></button>
       <button onClick={() => setModal("sync")}><span>Sync</span><small>{syncStatus.pendingCount ? `${syncStatus.pendingCount} change${syncStatus.pendingCount === 1 ? "" : "s"} waiting to upload` : "Offline copy and upload status"}</small></button>
       <button onClick={() => setModal("connection")}><span>Connection</span><small>Account and server settings</small></button>
-      <button onClick={() => setModal("credits")}><span>Picture credits</span><small>Who made the food pictures</small></button>
       <button onClick={() => setModal("about")}><span>About</span><small>Version {appVersion}{macApp && !isNativeHost() ? " · Mac app available" : ""}</small></button>
       <button className="settings-danger" onClick={() => setModal("reset")}><span>Reset app data</span><small>Delete everything and restore the default foods</small></button>
     </div></Modal>}
@@ -1375,7 +1369,6 @@ export default function App() {
         finally { setResetting(false); }
       }}
     /></Modal>}
-    {modal === "credits" && <Modal title="Picture credits" onClose={() => setModal(null)}><PictureCredits /></Modal>}
     {modal === "about" && <Modal title="About Calorie Logger" onClose={() => setModal(null)}>
       <AboutPanel update={update} macApp={macApp} onUpdate={() => void installUpdate()} />
     </Modal>}
