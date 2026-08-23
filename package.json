@@ -1,0 +1,26 @@
+{
+  "name": "calorie-logger",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "npm --prefix web run dev",
+    "build:web": "npm --prefix web run build",
+    "stage:pwa": "npm run build:web && ./scripts/stage-pocketbase.sh",
+    "package:server": "npm run stage:pwa && ./scripts/package-pocketbase-server.sh",
+    "server:build": "npm run stage:pwa && docker compose -f pocketbase/compose.yaml build",
+    "server:up": "npm run stage:pwa && docker compose -f pocketbase/compose.yaml up -d --build",
+    "server:down": "docker compose -f pocketbase/compose.yaml down",
+    "test:server": "python3 -B scripts/integration/calorie_logger_api.py && python3 -B scripts/integration/data_preservation.py",
+    "test:browser": "CALORIE_LOGGER_BROWSER_SMOKE=1 python3 -B scripts/integration/calorie_logger_api.py",
+    "test:pwa": "python3 -B scripts/verify-pwa.py",
+    "test:web": "npm --prefix web run test",
+    "generate:icons": "python3 -B scripts/generate_app_icons.py",
+    "generate:pictures": "python3 -B scripts/prepare_food_pictures.py",
+    "generate:mac": "xcodegen generate --spec macos/project.yml",
+    "build:mac": "./scripts/build-macos.sh",
+    "package:mac": "./scripts/package-macos-release.sh",
+    "run:mac": "./scripts/run-macos.sh",
+    "test:cofid": "python3 -B -m unittest discover -s scripts/tests -p 'test_*.py'",
+    "test": "npm run test:cofid && npm run test:web && npm run build:web && npm run test:pwa && ./scripts/test-macos.sh"
+  }
+}

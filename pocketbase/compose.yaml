@@ -1,0 +1,31 @@
+services:
+  pocketbase:
+    build:
+      context: ..
+      dockerfile: pocketbase/Dockerfile
+      args:
+        PB_VERSION: "${PB_VERSION:-0.39.10}"
+    container_name: calorie-logger-pocketbase
+    restart: unless-stopped
+    ports:
+      - "${PB_BIND_ADDRESS:-127.0.0.1}:${PB_PORT:-8090}:8090"
+    environment:
+      # The release identity, so /health reports which build is running.
+      CALORIE_LOGGER_VERSION: "${CALORIE_LOGGER_VERSION:-}"
+      CALORIE_LOGGER_BUILD: "${CALORIE_LOGGER_BUILD:-}"
+      # The food estimator, kept out of the repository and out of every release archive. An empty
+      # key simply means described portions cannot be estimated on this server; everything else
+      # keeps working.
+      AI_PROVIDER: "${AI_PROVIDER:-}"
+      AI_API_KEY: "${AI_API_KEY:-}"
+      AI_MODEL: "${AI_MODEL:-}"
+      AI_BASE_URL: "${AI_BASE_URL:-}"
+      # Read as a fallback, so a server configured before the setting was generalised keeps working.
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-}"
+    volumes:
+      - "${PB_DATA_PATH:-./pb_data}:/pb/pb_data"
+      # The published macOS application. It is served from here rather than from pb_public because
+      # everything in pb_public is precached by the installed web app's service worker, and a
+      # desktop archive has no business being downloaded onto a phone.
+      - "${CALORIE_LOGGER_DOWNLOADS_PATH:-./downloads}:/pb/downloads:ro"

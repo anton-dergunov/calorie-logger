@@ -1,0 +1,336 @@
+# The complete approved food picture set.
+#
+# `id` matches both `web/src/assets/pictures/<id>.webp` and the master artwork in `icons/<id>.png`;
+# a food stores the value `pic:<id>`. The label is what the chooser shows, and label and keywords
+# together are the text the bundled search model embeds, so they are written the way a food gets
+# typed in, not the way a designer would name a file.
+#
+# Adding artwork means adding it to `icons/`, adding an entry here, and running
+# `npm run generate:pictures`, which refuses to run while the two disagree.
+
+# The default picture, used until a food has one of its own
+- id: plate
+  label: Plate
+  keywords: [plate, meal, dish, food, dinner, cutlery, fork and knife]
+
+# Fruit
+- id: apple
+  label: Apple
+  keywords: [apple, apples, red apple, green apple, fruit]
+- id: banana
+  label: Bananas
+  keywords: [banana, bananas, fruit]
+- id: pear
+  label: Pear
+  keywords: [pear, pears, fruit]
+- id: plum
+  label: Plum
+  keywords: [plum, plums, damson, prune, fruit]
+- id: peach
+  label: Peach
+  keywords: [peach, peaches, fruit]
+- id: nectarine
+  label: Nectarine
+  keywords: [nectarine, nectarines, apricot, peach, fruit]
+- id: kiwi
+  label: Kiwi
+  keywords: [kiwi, kiwi fruit, kiwifruit, fruit]
+- id: mango
+  label: Mango
+  keywords: [mango, mangoes, papaya, tropical fruit]
+- id: orange
+  label: Orange
+  keywords: [orange, oranges, satsuma, clementine, mandarin, tangerine, easy peeler, grapefruit, citrus]
+- id: lemon
+  label: Lemon
+  keywords: [lemon, lemons, lime, citrus]
+- id: grape
+  label: Grapes
+  keywords: [grape, grapes, vine, raisins, fruit]
+- id: pomegranate
+  label: Pomegranate
+  keywords: [pomegranate, pomegranates, seeds, fruit]
+- id: watermelon
+  label: Watermelon
+  keywords: [watermelon, melon, fruit]
+- id: fruit
+  label: Melon slice
+  keywords: [melon, cantaloupe, honeydew, galia, fig, figs, sweet fruit]
+- id: strawberry
+  label: Strawberry
+  keywords: [strawberry, strawberries, berry, berries, fruit]
+- id: berries
+  label: Mixed berries
+  keywords: [berries, berry, blueberries, raspberries, blackberries, frozen berries, fruit]
+- id: berry
+  label: Cherries
+  keywords: [cherry, cherries, berry, berries, fruit]
+- id: coconut
+  label: Coconut
+  keywords: [coconut, coconuts, desiccated coconut, tropical]
+
+# Vegetables and salad
+- id: tomato
+  label: Tomato
+  keywords: [tomato, tomatoes, vine tomato, cherry tomato, salad]
+- id: cucumber
+  label: Cucumber
+  keywords: [cucumber, cucumbers, sliced cucumber, salad]
+- id: pepper
+  label: Pepper
+  keywords: [pepper, peppers, bell pepper, capsicum, paprika, salad]
+- id: courgette
+  label: Courgette
+  keywords: [courgette, courgettes, zucchini, marrow, squash]
+- id: zucchini
+  label: Zucchini
+  keywords: [zucchini, courgette, courgettes, marrow, squash]
+- id: aubergine
+  label: Aubergine
+  keywords: [aubergine, aubergines, eggplant, brinjal]
+- id: carrot
+  label: Carrot
+  keywords: [carrot, carrots, root vegetable]
+- id: beetroot
+  label: Beetroot
+  keywords: [beetroot, beet, beets, pickled beetroot, root vegetable]
+- id: radish
+  label: Radish
+  keywords: [radish, radishes, salad]
+- id: potato
+  label: Potatoes
+  keywords: [potato, potatoes, new potatoes, jacket potato, mash]
+- id: sweet-potato
+  label: Sweet potato
+  keywords: [sweet potato, sweet potatoes, yam]
+- id: broccoli
+  label: Broccoli
+  keywords: [broccoli, tenderstem, calabrese, green vegetable]
+- id: cauliflower
+  label: Cauliflower
+  keywords: [cauliflower, cauliflower rice, brassica]
+- id: cabbage
+  label: Cabbage
+  keywords: [cabbage, white cabbage, savoy, greens, brassica]
+- id: spinach
+  label: Spinach
+  keywords: [spinach, baby spinach, greens, leaves]
+- id: salad
+  label: Salad leaves
+  keywords: [salad, salad leaves, lettuce, rocket, mixed leaves, greens]
+- id: mushroom
+  label: Mushroom
+  keywords: [mushroom, mushrooms, chestnut mushrooms, button mushrooms, fungi]
+- id: onion
+  label: Onion
+  keywords: [onion, onions, red onion, shallot]
+- id: garlic
+  label: Garlic
+  keywords: [garlic, garlic cloves, bulb]
+- id: ginger
+  label: Ginger
+  keywords: [ginger, ginger root, root, spice]
+- id: pea
+  label: Pea pod
+  keywords: [peas, pea, garden peas, shelled peas, mangetout, sugar snap, green beans]
+- id: corn
+  label: Sweetcorn
+  keywords: [corn, sweetcorn, corn on the cob, maize]
+- id: edamame
+  label: Edamame
+  keywords: [edamame, soya beans, soy beans, green beans, pods]
+- id: sprouts
+  label: Bean sprouts
+  keywords: [sprouts, bean sprouts, lentil sprouts, sprouted, seedling, microgreens]
+- id: vegetable
+  label: Mixed vegetables
+  keywords: [vegetables, vegetable, mixed vegetables, produce, greens, food, meal]
+- id: frozen-food
+  label: Frozen vegetables
+  keywords: [frozen, frozen vegetables, freezer, mixed veg, ice]
+
+# Beans, pulses and protein
+- id: tofu
+  label: Tofu
+  keywords: [tofu, bean curd, soya, firm tofu, silken tofu, protein]
+- id: tempeh
+  label: Tempeh
+  keywords: [tempeh, fermented soya, soy, protein]
+- id: seitan
+  label: Seitan
+  keywords: [seitan, wheat protein, gluten, mock duck, protein]
+- id: chickpeas
+  label: Chickpeas
+  keywords: [chickpeas, chick peas, garbanzo, houmous, hummus, pulses]
+- id: lentils
+  label: Lentils
+  keywords: [lentils, red lentils, green lentils, dahl, pulses]
+- id: red-beans
+  label: Beans
+  keywords: [beans, kidney beans, black beans, borlotti, baked beans, pulses]
+- id: mushy-peas
+  label: Mushy peas
+  keywords: [mushy peas, marrowfat peas, canned peas, tinned peas]
+- id: mince
+  label: Meat-free mince
+  keywords: [mince, minced, meat-free mince, soya mince, plant based mince, protein]
+- id: meatballs
+  label: Meat-free meatballs
+  keywords: [meatballs, balls, meat-free meatballs, plant based, protein]
+- id: burger
+  label: Meat-free burger
+  keywords: [burger, burgers, patty, meat-free burger, plant based burger]
+- id: sausage
+  label: Meat-free sausage
+  keywords: [sausage, sausages, hot dog, meat-free sausage, plant based]
+- id: pepperoni
+  label: Meat-free slices
+  keywords: [pepperoni, salami, deli slices, meat-free slices, plant based]
+- id: protein
+  label: Protein powder
+  keywords: [protein powder, protein shake, whey, vegan protein, supplement, powder]
+
+# Nuts and seeds
+- id: nuts2
+  label: Assorted nuts
+  keywords: [nuts, assorted nuts, mixed nuts, nut mix, snack]
+- id: nuts
+  label: Nuts
+  keywords: [nut, nuts, chestnut, chestnuts, acorn, hazelnut]
+- id: almond
+  label: Almonds
+  keywords: [almond, almonds, marzipan, nuts]
+- id: cashew
+  label: Cashew
+  keywords: [cashew, cashews, nuts]
+- id: walnut
+  label: Walnuts
+  keywords: [walnut, walnuts, pecan, nuts]
+- id: brazil-nuts
+  label: Brazil nuts
+  keywords: [brazil nuts, brazil nut, nuts]
+- id: pistachio
+  label: Pistachios
+  keywords: [pistachio, pistachios, pistachio nuts, nuts]
+- id: peanut
+  label: Peanuts
+  keywords: [peanut, peanuts, peanut butter, monkey nuts, nuts]
+- id: pumpkin-seeds
+  label: Pumpkin seeds
+  keywords: [pumpkin seeds, pepitas, seeds, snack]
+- id: flaxseed
+  label: Flaxseed
+  keywords: [flaxseed, linseed, flax, chia, seeds]
+
+# Grains, bread and pasta
+- id: rice
+  label: Rice
+  keywords: [rice, basmati, brown rice, white rice, grain]
+- id: buckwheat
+  label: Buckwheat
+  keywords: [buckwheat, groats, kasha, grain]
+- id: quinoa
+  label: Quinoa
+  keywords: [quinoa, grain, seeds]
+- id: couscous
+  label: Couscous
+  keywords: [couscous, cous-cous, bulgur, semolina, grain]
+- id: spaghetti
+  label: Spaghetti
+  keywords: [spaghetti, pasta, noodles, linguine]
+- id: jpasta
+  label: Pasta
+  keywords: [pasta, penne, fusilli, macaroni, rigatoni]
+- id: cereal
+  label: Breakfast cereal
+  keywords: [cereal, breakfast cereal, cornflakes, granola, porridge, oats]
+- id: muesli
+  label: Muesli
+  keywords: [muesli, granola, porridge, oats, breakfast, protein granola, yoghurt]
+- id: bread
+  label: Bread
+  keywords: [bread, loaf, sliced bread, sourdough, white bread, toast, flatbread]
+- id: rye-bread
+  label: Rye loaf
+  keywords: [rye bread, rye loaf, sourdough, wholemeal, brown bread]
+- id: rye-bread-2
+  label: Rye slices
+  keywords: [rye bread, dark bread, pumpernickel, bread slices]
+- id: crispbread
+  label: Crispbread
+  keywords: [crispbread, crackers, rye crisp, rice cakes, crisp bread]
+
+# Cans, jars and preserves
+- id: tomato-can
+  label: Chopped tomatoes
+  keywords: [chopped tomatoes, tinned tomatoes, canned tomatoes, passata, tomato tin]
+- id: olives
+  label: Olives
+  keywords: [olives, olive, green olives, black olives]
+- id: pickles
+  label: Pickles
+  keywords: [pickles, pickled, jar, pickled vegetables]
+- id: pickled-cucumber
+  label: Pickled cucumbers
+  keywords: [pickled cucumbers, gherkins, pickles, dill cucumbers]
+- id: gherkin
+  label: Gherkin
+  keywords: [gherkin, gherkins, pickled gherkins, cornichon]
+- id: sauerkraut
+  label: Sauerkraut
+  keywords: [sauerkraut, fermented cabbage, kimchi, jar]
+
+# Drinks, oils and sauces
+- id: soy-milk
+  label: Soya drink
+  keywords: [soya drink, soy milk, soya milk, plant milk, oat milk, almond milk, carton]
+- id: soy-milk-2
+  label: Soya drink glass
+  keywords: [soya drink, soy milk, glass of milk, plant milk, drink]
+- id: soy-milk-3
+  label: Soya carton
+  keywords: [soya drink, soy milk, plant milk, carton, drink]
+- id: coconut-milk
+  label: Coconut milk
+  keywords: [coconut milk, coconut cream, carton, tin]
+- id: tomato-juice
+  label: Tomato juice
+  keywords: [tomato juice, juice, drink]
+- id: olive-oil
+  label: Olive oil
+  keywords: [olive oil, extra virgin, oil, bottle]
+- id: sesame-oil
+  label: Sesame oil
+  keywords: [sesame oil, toasted sesame oil, oil, bottle]
+- id: sunflower-oil
+  label: Sunflower oil
+  keywords: [sunflower oil, rapeseed oil, oil, bottle]
+- id: vegetable-oil
+  label: Vegetable oil
+  keywords: [vegetable oil, cooking oil, oil, bottle]
+- id: soy-sauce
+  label: Soy sauce
+  keywords: [soy sauce, soya sauce, tamari, seasoning, sauce]
+
+# Prepared dishes and snacks
+- id: soup
+  label: Soup
+  keywords: [soup, broth, stew, bowl, meal]
+- id: gazpacho
+  label: Gazpacho
+  keywords: [gazpacho, tomato soup, cold soup, bowl]
+- id: guacamole
+  label: Guacamole
+  keywords: [guacamole, dip, houmous, hummus, avocado dip]
+- id: avocado
+  label: Avocado
+  keywords: [avocado, avocados, guacamole]
+- id: pizza
+  label: Pizza
+  keywords: [pizza, slice, takeaway]
+- id: chocolate
+  label: Chocolate
+  keywords: [chocolate, chocolate bar, dark chocolate, cocoa, sweet]
+- id: energy-bar
+  label: Energy bar
+  keywords: [energy bar, protein bar, cereal bar, flapjack, snack bar]

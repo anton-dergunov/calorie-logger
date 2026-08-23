@@ -1,0 +1,29 @@
+node_modules/
+web/dist/
+web/coverage/
+web/*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+# Editor swap files. One was committed once, and a Vim swap header carries the machine name and
+# the home directory path of whoever was editing.
+*.swp
+*.swo
+*~
+__pycache__/
+*.pyc
+pocketbase/pb_data/
+pocketbase/pb_public/*
+!pocketbase/pb_public/.gitkeep
+pocketbase/downloads/*
+!pocketbase/downloads/.gitkeep
+pocketbase/.env
+.env
+.env.*
+!.env.example
+.*-deploy
+icons/
