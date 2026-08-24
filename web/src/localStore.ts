@@ -385,12 +385,33 @@ class LocalStore {
     if (entries.length) await this.commit({ entries });
   }
 
-  async copyEntries(ids: string[], destinationDate: string): Promise<void> {
-    const sources = ids
+  async copyEntries(ids: string[], destinationDate: string, meal?: Meal): Promise<void> {
+    await this.appendCopies(this.orderedSources(ids), destinationDate, meal);
+  }
+
+  /**
+   * Moves entries to another day, and optionally another meal, by re-dating the records themselves.
+   *
+   * A move keeps every id: tombstoning the originals and writing copies would make one intention
+   * arrive at another device as two unrelated changes, and a replica that had only seen half of
+   * them would show the food twice or not at all.
+   */
+  async moveEntries(ids: string[], destinationDate: string, meal?: Meal): Promise<void> {
+    const sources = this.orderedSources(ids);
+    if (!sources.length) return;
+    let index = this.nextIndex(destinationDate);
+    const entries = sources.map((source) => ({
+      ...source, date: destinationDate, meal: meal ?? source.meal, sortIndex: index++,
+      ...this.stamp(source.createdAt)
+    }));
+    await this.commit({ entries });
+  }
+
+  private orderedSources(ids: string[]): StoredEntry[] {
+    return ids
       .map((id) => this.entries.get(id))
       .filter((entry): entry is StoredEntry => entry !== undefined && !entry.deleted)
       .sort((left, right) => left.date.localeCompare(right.date) || entryOrder(left, right));
-    await this.appendCopies(sources, destinationDate);
   }
 
   async repeatPreviousDay(date: string): Promise<void> {
@@ -405,12 +426,12 @@ class LocalStore {
     return this.liveEntries().filter((entry) => entry.date === date).sort(entryOrder);
   }
 
-  private async appendCopies(sources: StoredEntry[], destinationDate: string): Promise<void> {
+  private async appendCopies(sources: StoredEntry[], destinationDate: string, meal?: Meal): Promise<void> {
     if (!sources.length) return;
     let index = this.nextIndex(destinationDate);
     const entries = sources.map((source) => {
       const copy: StoredEntry = {
-        id: newId(), foodId: source.foodId, date: destinationDate, meal: source.meal,
+        id: newId(), foodId: source.foodId, date: destinationDate, meal: meal ?? source.meal,
         amount: source.amount, sortIndex: index, ...this.stamp()
       };
       index += 1;

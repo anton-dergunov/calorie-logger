@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
 import { localDateString, moveDate } from "./date";
 import { localStore } from "./localStore";
@@ -1111,7 +1111,9 @@ describe("calorie log design", () => {
     expect(row.querySelector("input[type=checkbox]")).toBeNull();
     expect(Array.from(rowButton.children).slice(1).map((cell) => cell.textContent)).toEqual(["100.0", "5.0", "2.0", "15.0", "100"]);
     const dinnerSection = screen.getByRole("heading", { name: "Dinner" }).closest("section")!;
-    const dinnerHeading = dinnerSection.querySelector(".meal-heading")!;
+    // The heading's grid moved onto an inner element when a selection checkbox column was added
+    // beside it, and the columns it aligns with the rows are the same ones.
+    const dinnerHeading = dinnerSection.querySelector(".meal-heading-main")!;
     expect(dinnerHeading.children).toHaveLength(5);
     expect(dinnerHeading.children[0].className).toBe("meal-primary");
     expect(dinnerHeading.children[0].querySelector(".meal-actions")).not.toBeNull();
@@ -1283,5 +1285,205 @@ describe("high-contribution foods", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save preferences" }));
 
     await waitFor(() => expect(savePreferences).toHaveBeenCalledWith({ dayRolloverMinutes: 0, contributionThreshold: 35 }));
+  });
+});
+
+describe("entry gestures and bulk actions", () => {
+  const NO_TARGETS: Targets = { calories: null, protein: null, fat: null, carbs: null };
+
+  // jsdom has no PointerEvent, and its stand-in drops every field the gestures read. This is the
+  // smallest thing that carries a pointer type, a button and a position.
+  class TestPointerEvent extends MouseEvent {
+    pointerType: string;
+    pointerId: number;
+    constructor(type: string, init: MouseEventInit & { pointerType?: string; pointerId?: number } = {}) {
+      super(type, init);
+      this.pointerType = init.pointerType ?? "mouse";
+      this.pointerId = init.pointerId ?? 1;
+    }
+  }
+  beforeEach(() => { vi.stubGlobal("PointerEvent", TestPointerEvent); });
+
+  async function day(entries: LogEntry[]) {
+    await seed({ day: { date: localDateString(), entries, totals: {} }, targets: NO_TARGETS, foods: [] });
+  }
+  const rowOf = (name: string) => screen.getByRole("button", { name: `Edit ${name}` }).closest<HTMLElement>("[role=row]")!;
+  const touch = { pointerType: "touch", pointerId: 1, button: 0 };
+
+  it("lifts an entry for reordering after a still press", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+    const row = rowOf("Oats");
+
+    vi.useFakeTimers();
+    fireEvent.pointerDown(row, { ...touch, clientX: 40, clientY: 40 });
+    act(() => { vi.advanceTimersByTime(400); });
+    vi.useRealTimers();
+
+    expect(screen.getByText("Drag entries into place")).toBeTruthy();
+    const lifted = screen.getByRole("button", { name: "Reorder Oats" }).closest<HTMLElement>("[role=row]")!;
+    expect(lifted.className).toContain("is-dragged");
+  });
+
+  it("treats a press that moves before it settles as a scroll, and lifts nothing", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    vi.useFakeTimers();
+    fireEvent.pointerDown(rowOf("Oats"), { ...touch, clientX: 40, clientY: 40 });
+    fireEvent.pointerMove(document, { ...touch, clientX: 42, clientY: 90 });
+    act(() => { vi.advanceTimersByTime(400); });
+    vi.useRealTimers();
+
+    expect(screen.queryByText("Drag entries into place")).toBeNull();
+  });
+
+  it("opens the editor on a quick tap", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.pointerDown(rowOf("Oats"), { ...touch, clientX: 40, clientY: 40 });
+    fireEvent.pointerUp(document, { ...touch, clientX: 40, clientY: 40 });
+    fireEvent.click(screen.getByRole("button", { name: "Edit Oats" }));
+
+    expect(await screen.findByRole("dialog", { name: "Edit entry" })).toBeTruthy();
+  });
+
+  it("leaves selection mode once the selected entries are deleted", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    const deleteEntries = vi.spyOn(repository, "deleteEntries");
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Select entries/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Oats" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(deleteEntries).toHaveBeenCalledWith(["a"]));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Done" })).toBeNull());
+    expect(screen.queryByRole("checkbox", { name: "Select Oats" })).toBeNull();
+  });
+
+  it("selects and clears a whole meal from its heading", async () => {
+    await day([entry("a", "Oats", "breakfast", 0), entry("b", "Toast", "breakfast", 1), entry("c", "Soup", "lunch", 2)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Select entries/ }));
+    const wholeMeal = screen.getByRole("checkbox", { name: "Select all Breakfast" }) as HTMLInputElement;
+    fireEvent.click(wholeMeal);
+
+    expect(screen.getByText("2 selected")).toBeTruthy();
+    expect((screen.getByRole("checkbox", { name: "Select Soup" }) as HTMLInputElement).checked).toBe(false);
+    expect(wholeMeal.checked).toBe(true);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Oats" }));
+    expect((screen.getByRole("checkbox", { name: "Select all Breakfast" }) as HTMLInputElement).indeterminate).toBe(true);
+
+    // Clicking a partly filled box takes the rest of the meal, and clicking it again lets it all go.
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all Breakfast" }));
+    expect(screen.getByText("2 selected")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all Breakfast" }));
+    expect(screen.getByText("Tap entries to select")).toBeTruthy();
+  });
+
+  it("copies the selection into a chosen day and meal, and closes the selection", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    const copyEntries = vi.spyOn(repository, "copyEntries");
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Select entries/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Oats" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy…" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Tomorrow" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Meal" }), { target: { value: "dinner" } });
+    fireEvent.click(screen.getByRole("button", { name: "Copy 1 entry" }));
+
+    await waitFor(() => expect(copyEntries).toHaveBeenCalledWith(["a"], moveDate(localDateString(), 1), "dinner"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByRole("checkbox", { name: "Select Oats" })).toBeNull();
+  });
+
+  it("moves the selection instead of copying it, keeping the original meals", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    const moveEntries = vi.spyOn(repository, "moveEntries");
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Select entries/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Oats" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move 1 entry" }));
+
+    await waitFor(() => expect(moveEntries).toHaveBeenCalledWith(["a"], moveDate(localDateString(), 1), undefined));
+  });
+
+  it("reveals copy and delete under a swiped entry, and puts them away on a scroll", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.pointerDown(rowOf("Oats"), { ...touch, clientX: 260, clientY: 40 });
+    fireEvent.pointerMove(document, { ...touch, clientX: 220, clientY: 42 });
+    fireEvent.pointerUp(document, { ...touch, clientX: 160, clientY: 42 });
+
+    expect(screen.getByRole("button", { name: "Copy…" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+
+    fireEvent.scroll(window);
+    expect(screen.queryByRole("button", { name: "Copy…" })).toBeNull();
+  });
+
+  it("offers the entry actions on a right-click and duplicates into the same meal", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    const copyEntries = vi.spyOn(repository, "copyEntries");
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.contextMenu(rowOf("Oats"), { clientX: 120, clientY: 200 });
+    expect(screen.getByRole("menu", { name: "Oats" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate here" }));
+
+    await waitFor(() => expect(copyEntries).toHaveBeenCalledWith(["a"], localDateString(), "breakfast"));
+  });
+
+  it("confirms before deleting one entry from its own actions", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    const deleteEntries = vi.spyOn(repository, "deleteEntries");
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.contextMenu(rowOf("Oats"), { clientX: 120, clientY: 200 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    expect(deleteEntries).not.toHaveBeenCalled();
+
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Delete entry" })).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleteEntries).toHaveBeenCalledWith(["a"]));
+  });
+
+  it("moves a focused entry between positions and meals with the arrow keys", async () => {
+    await day([entry("a", "Oats", "breakfast", 0), entry("b", "Toast", "breakfast", 1)]);
+    const reorder = vi.spyOn(repository, "reorderEntries");
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Reorder entries/ }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Oats" }), { key: "ArrowDown" });
+
+    await waitFor(() => expect(reorder).toHaveBeenCalledWith([
+      { id: "b", meal: "breakfast" }, { id: "a", meal: "breakfast" }
+    ]));
   });
 });

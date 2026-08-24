@@ -28,7 +28,10 @@ export interface FoodRepository {
   updateEntry(id: string, date: string, amount: number, meal: Meal, foodId?: string): Promise<void>;
   deleteEntries(ids: string[]): Promise<void>;
   reorderEntries(placements: EntryPlacement[]): Promise<void>;
-  copyEntries(ids: string[], destinationDate: string): Promise<void>;
+  /** Appends copies to another day, in their own meals or all in one chosen meal. */
+  copyEntries(ids: string[], destinationDate: string, meal?: Meal): Promise<void>;
+  /** Re-dates the entries themselves, keeping their ids so the move replicates as one change. */
+  moveEntries(ids: string[], destinationDate: string, meal?: Meal): Promise<void>;
   repeatPreviousMeal(date: string, meal: Meal): Promise<void>;
   saveTargets(targets: Targets): Promise<Targets>;
   /** When a day starts, and how large a share of a target makes a food worth flagging. */
@@ -55,7 +58,8 @@ class LocalFoodRepository implements FoodRepository {
   updateEntry = (id: string, date: string, amount: number, meal: Meal, foodId?: string) => localStore.updateEntry(id, date, amount, meal, foodId);
   deleteEntries = (ids: string[]) => localStore.deleteEntries(ids);
   reorderEntries = (placements: EntryPlacement[]) => localStore.reorderEntries(placements);
-  copyEntries = (ids: string[], destinationDate: string) => localStore.copyEntries(ids, destinationDate);
+  copyEntries = (ids: string[], destinationDate: string, meal?: Meal) => localStore.copyEntries(ids, destinationDate, meal);
+  moveEntries = (ids: string[], destinationDate: string, meal?: Meal) => localStore.moveEntries(ids, destinationDate, meal);
   repeatPreviousMeal = (date: string, meal: Meal) => localStore.repeatPreviousMeal(date, meal);
   saveTargets = (targets: Targets) => localStore.saveTargets(targets);
   savePreferences = (preferences: Preferences) => localStore.savePreferences(preferences);

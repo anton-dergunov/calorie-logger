@@ -150,6 +150,32 @@ describe("entry operations", () => {
     expect(localStore.day(YESTERDAY).entries).toHaveLength(2);
   });
 
+  it("copies into a chosen meal, and repeating keeps each entry in its own", async () => {
+    const food = await localStore.saveFood(foodInput());
+    await localStore.addEntry(YESTERDAY, food.id, 10, "breakfast");
+    await localStore.addEntry(YESTERDAY, food.id, 20, "dinner");
+    const sources = localStore.day(YESTERDAY).entries.map((item) => item.id);
+
+    await localStore.copyEntries(sources, TODAY, "lunch");
+    expect(localStore.day(TODAY).entries.map((item) => [item.amount, item.meal])).toEqual([[10, "lunch"], [20, "lunch"]]);
+
+    await localStore.repeatPreviousMeal(TODAY, "dinner");
+    expect(localStore.day(TODAY).entries.map((item) => item.meal)).toEqual(["lunch", "lunch", "dinner"]);
+  });
+
+  it("moves entries to another day and meal, keeping the records themselves", async () => {
+    const food = await localStore.saveFood(foodInput());
+    await localStore.addEntry(TODAY, food.id, 10, "breakfast");
+    await localStore.addEntry(TODAY, food.id, 20, "breakfast");
+    const [first] = localStore.day(TODAY).entries;
+
+    await localStore.moveEntries([first.id], YESTERDAY, "dinner");
+
+    expect(localStore.day(TODAY).entries.map((item) => item.amount)).toEqual([20]);
+    const moved = localStore.day(YESTERDAY).entries;
+    expect(moved.map((item) => [item.id, item.amount, item.meal])).toEqual([[first.id, 10, "dinner"]]);
+  });
+
   it("appends repeated and copied entries after whatever the day already holds", async () => {
     const food = await localStore.saveFood(foodInput());
     await localStore.addEntry(YESTERDAY, food.id, 10, "breakfast");

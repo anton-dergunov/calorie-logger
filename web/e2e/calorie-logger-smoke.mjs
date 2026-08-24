@@ -130,6 +130,42 @@ async function assertAddFoodLayout(viewport, phone) {
   await context.close();
 }
 
+/**
+ * The copy/move dialog draws its own calendar, because the browser's date popup is drawn outside
+ * the page at a size no rule can reach. Ours has to fit a phone: no sideways overflow, one
+ * scroller, and the button that performs the copy reachable at the end of it.
+ */
+async function assertTransferDialog(viewport) {
+  const context = await browser.newContext({ viewport });
+  const page = await context.newPage();
+  await login(page);
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await page.getByRole("button", { name: /Select entries/ }).click();
+  await page.locator(".check-cell input").first().check();
+  await page.getByRole("button", { name: "Copy…" }).click();
+  const dialog = page.getByRole("dialog", { name: /^Copy \d+ entr/ });
+  await dialog.waitFor();
+
+  const calendar = await dialog.locator(".month-calendar").boundingBox();
+  assert.ok(calendar, "the dialog should draw its own calendar");
+  assert.ok(calendar.x >= 0 && calendar.x + calendar.width <= viewport.width + 1,
+    `the calendar overflows the phone sideways: ${calendar.x} + ${calendar.width}`);
+  assert.equal(await dialog.evaluate((element) =>
+    [...element.querySelectorAll("*")].filter((node) => node.scrollHeight > node.clientHeight + 1).length), 1,
+    "the copy dialog must own exactly one scroller");
+
+  const reach = await dialog.evaluate((element) => {
+    const scroller = [...element.querySelectorAll("*")].find((node) => node.scrollHeight > node.clientHeight + 1) ?? element;
+    scroller.scrollTop = scroller.scrollHeight;
+    return true;
+  });
+  assert.ok(reach);
+  const confirm = await dialog.getByRole("button", { name: /^Copy \d+ entr/ }).boundingBox();
+  assert.ok(confirm && confirm.y >= 0 && confirm.y + confirm.height <= viewport.height + 1,
+    "the copy button must be reachable at the end of the dialog");
+  await context.close();
+}
+
 try {
   const firstContext = await browser.newContext({ acceptDownloads: true });
   const secondContext = await browser.newContext();
@@ -211,6 +247,7 @@ try {
   await assertAddFoodLayout({ width: 412, height: 915 }, true);
   await assertAddFoodLayout({ width: 768, height: 1024 }, false);
   await assertAddFoodLayout({ width: 1024, height: 768 }, false);
+  await assertTransferDialog({ width: 390, height: 844 });
 
   await first.getByRole("button", { name: "Open settings" }).click();
   await first.getByRole("button", { name: /Connection/ }).click();

@@ -45,8 +45,9 @@ figure. When your food is not there yet:
   foods, listed separately so a busy product search cannot bury "potato".
 - **Type it in.** Per 100 g, per millilitre, or per item, whatever the food is naturally measured in.
 
-Then: **repeat yesterday's breakfast** in one tap when it was the same. Copy entries to another day.
-Edit, reorder, or delete anything. Add something as a **one-off** so it gets logged without
+Then: **repeat yesterday's breakfast** in one tap when it was the same. Copy or move entries to
+another day and meal. Tap an entry to edit it, press and hold to drag it somewhere else, or swipe it
+aside for its own copy and delete buttons. Add something as a **one-off** so it gets logged without
 cluttering your catalogue — it disappears on its own once nothing uses it.
 
 Editing a saved food updates every day it has ever appeared on, because entries reference your
