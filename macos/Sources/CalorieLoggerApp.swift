@@ -29,7 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         menuBar = MenuBarController(
             openLog: { [weak self] in self?.showWindow() },
             addFood: { [weak self] in self?.showAddFood() },
-            requestRefresh: { [weak self] in self?.requestMenuSummary() },
             installUpdate: { [weak self] in self?.installUpdate() }
         )
         bridge.onSummary = { [weak self] summary in self?.menuBar.update(summary) }
@@ -138,10 +137,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     private func showConnection() {
         showWebCommand("openConnection")
-    }
-
-    private func requestMenuSummary() {
-        webView?.evaluateJavaScript("window.calorieLogger?.refreshNativeSummary?.()")
     }
 
     private func showWebCommand(_ command: String) {

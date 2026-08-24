@@ -2,6 +2,7 @@ import { CalorieLoggerApiError, backendSession, postSync } from "./api";
 import { nowInstant } from "./ids";
 import { SCHEMA_VERSION, localStore } from "./localStore";
 import type { RecordStore } from "./localDatabase";
+import { isNativeHost } from "./session";
 
 export type SyncState = "idle" | "syncing" | "offline" | "blocked" | "signedOut";
 
@@ -29,6 +30,15 @@ const IDLE_STATUS: SyncStatus = {
   state: "signedOut", pendingCount: 0, lastPulledAt: null, lastPushedAt: null,
   supersededCount: 0, discardedCount: 0, message: null
 };
+
+/**
+ * A background browser tab is paused to avoid pointless work, but the native macOS host keeps
+ * running as a menu-bar icon after its window closes and is still the app the owner is using, so
+ * it must keep syncing even while its `WKWebView` reports itself as hidden.
+ */
+export function shouldSyncWhenTriggered(): boolean {
+  return isNativeHost() || document.visibilityState === "visible";
+}
 
 /**
  * Exchanges local changes for remote ones.
@@ -73,7 +83,7 @@ class SyncEngine {
     // started underneath them; `syncNow` still works when a test asks for it explicitly.
     if (import.meta.env.MODE === "test") return;
     const trigger = () => { void this.syncNow(); };
-    const whenVisible = () => { if (document.visibilityState === "visible") trigger(); };
+    const whenVisible = () => { if (shouldSyncWhenTriggered()) trigger(); };
 
     this.timer = window.setInterval(whenVisible, SYNC_INTERVAL);
     window.addEventListener("focus", whenVisible);

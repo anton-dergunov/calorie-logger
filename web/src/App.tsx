@@ -1189,11 +1189,10 @@ export default function App() {
       openTargets: () => setModal("targets"),
       openExport: () => setModal("export"),
       openConnection: () => setModal("connection"),
-      jumpToToday: () => setDate(menuDate),
-      refreshNativeSummary: async () => { await syncEngine.syncNow(); await publishNativeSummary(); }
+      jumpToToday: () => setDate(menuDate)
     };
     return () => { delete window.calorieLogger; };
-  }, [publishNativeSummary, menuDate]);
+  }, [menuDate]);
 
   const dateDisplay = displayDate(date);
   const toggleSelected = (id: string) => {

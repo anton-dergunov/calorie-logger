@@ -108,16 +108,13 @@ final class MenuBarController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: 37)
     private let popover = NSPopover()
     private let model = MenuSummaryModel()
-    private let requestRefresh: () -> Void
     private var updateAvailable = false
 
     init(
         openLog: @escaping () -> Void,
         addFood: @escaping () -> Void,
-        requestRefresh: @escaping () -> Void,
         installUpdate: @escaping () -> Void
     ) {
-        self.requestRefresh = requestRefresh
         super.init()
         popover.behavior = .transient
         popover.animates = false
@@ -184,7 +181,6 @@ final class MenuBarController: NSObject {
         guard let button = statusItem.button else { return }
         if popover.isShown { popover.performClose(nil) }
         else {
-            requestRefresh()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             DispatchQueue.main.async { [weak self, weak button] in
                 guard let self, let button, let buttonWindow = button.window,

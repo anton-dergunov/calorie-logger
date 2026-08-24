@@ -29,6 +29,11 @@ function nativeHandler() {
   return window.webkit?.messageHandlers?.calorieLogger;
 }
 
+/** Whether this page is running inside the macOS menu-bar host rather than a browser tab. */
+export function isNativeHost(): boolean {
+  return !!nativeHandler();
+}
+
 async function nativeCall<T>(method: string, payload: unknown = {}): Promise<T> {
   const result = await nativeHandler()!.postMessage({ method, payload }) as { data?: T; error?: string };
   if (result.error) throw new Error(result.error);

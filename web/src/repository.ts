@@ -76,7 +76,6 @@ declare global {
       openExport(): void;
       openConnection(): void;
       jumpToToday(): void;
-      refreshNativeSummary(): Promise<void>;
     };
   }
 }

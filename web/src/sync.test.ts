@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backendSession } from "./api";
 import { localDateString } from "./date";
 import { localStore, SCHEMA_VERSION } from "./localStore";
-import { syncEngine } from "./sync";
+import { shouldSyncWhenTriggered, syncEngine } from "./sync";
 import type { Food, FoodInput, StoredEntry, SyncResponse } from "./types";
 
 const TODAY = localDateString();
@@ -259,5 +259,34 @@ describe("a rebuilt server database", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(localStore.datasetId()).toBe("database-one");
     expect(localStore.cursor()).toBe(3);
+  });
+});
+
+describe("whether a background trigger should run a sync", () => {
+  function stubVisibility(state: DocumentVisibilityState) {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
+  }
+
+  afterEach(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    delete window.webkit;
+  });
+
+  it("syncs a visible browser tab", () => {
+    stubVisibility("visible");
+    expect(shouldSyncWhenTriggered()).toBe(true);
+  });
+
+  it("does not sync a background browser tab", () => {
+    stubVisibility("hidden");
+    expect(shouldSyncWhenTriggered()).toBe(false);
+  });
+
+  it("keeps syncing the native macOS host even once its window is closed and reports itself hidden", () => {
+    // This is the menu bar's actual failure mode: the window closes, WebKit marks the page
+    // hidden, and only the native host must see through that to keep the popover fresh.
+    stubVisibility("hidden");
+    window.webkit = { messageHandlers: { calorieLogger: { postMessage: vi.fn() } } };
+    expect(shouldSyncWhenTriggered()).toBe(true);
   });
 });
