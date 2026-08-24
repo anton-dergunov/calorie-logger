@@ -166,16 +166,14 @@ function TransferEntriesForm({ request, today, onCancel, onConfirm }: {
   </Modal>;
 }
 
-/** The actions a right-click offers on one entry. Mounted where the pointer is, or not at all. */
-function EntryMenu({ entry, position, onClose, onEdit, onCopy, onMove, onDuplicate, onDelete }: {
-  entry: LogEntry;
+interface MenuItem { label: string; run(): void; danger?: boolean }
+
+/** The actions a right-click offers. Mounted where the pointer is, or not at all. */
+function EntryMenu({ label, items, position, onClose }: {
+  label: string;
+  items: MenuItem[];
   position: { x: number; y: number };
   onClose(): void;
-  onEdit(): void;
-  onCopy(): void;
-  onMove(): void;
-  onDuplicate(): void;
-  onDelete(): void;
 }) {
   useEffect(() => {
     const key = (event: KeyboardEvent) => event.key === "Escape" && onClose();
@@ -186,19 +184,12 @@ function EntryMenu({ entry, position, onClose, onEdit, onCopy, onMove, onDuplica
       window.removeEventListener("scroll", onClose);
     };
   }, [onClose]);
-  const items: { label: string; run(): void; danger?: boolean }[] = [
-    { label: "Edit", run: onEdit },
-    { label: "Copy to…", run: onCopy },
-    { label: "Move to…", run: onMove },
-    { label: "Duplicate here", run: onDuplicate },
-    { label: "Delete", run: onDelete, danger: true }
-  ];
   return <div className="row-menu-layer" role="presentation" onPointerDown={onClose} onContextMenu={(event) => { event.preventDefault(); onClose(); }}>
     <div
       className="row-menu"
       role="menu"
-      aria-label={entry.name}
-      style={{ left: Math.min(position.x, Math.max(8, window.innerWidth - 196)), top: Math.min(position.y, Math.max(8, window.innerHeight - 216)) }}
+      aria-label={label}
+      style={{ left: Math.min(position.x, Math.max(8, window.innerWidth - 196)), top: Math.min(position.y, Math.max(8, window.innerHeight - 40 - items.length * 34)) }}
       onPointerDown={(event) => event.stopPropagation()}
     >
       {items.map((item) => <button
@@ -736,8 +727,11 @@ type Browse =
   | { view: "scan" }
   | { view: "edit"; food?: Food; external?: ExternalFoodResult; estimate?: FoodEstimate; oneOff?: boolean; duplicateOf?: Food; from: "pick" | "scan" };
 
-function AddFoodModal({ date, foods, entry, initialMeal, onClose, reportError }: {
-  date: string; foods: Food[]; entry?: LogEntry; initialMeal: Meal; onClose(): void; reportError(error: unknown): void;
+function AddFoodModal({ date, foods, entry, initialMeal, onClose, onRequestDelete, reportError }: {
+  date: string; foods: Food[]; entry?: LogEntry; initialMeal: Meal; onClose(): void;
+  /** Editing an entry is also where someone decides they did not eat it after all. */
+  onRequestDelete?(entry: LogEntry): void;
+  reportError(error: unknown): void;
 }) {
   const [browse, setBrowse] = useState<Browse>({ view: "pick" });
   const [query, setQuery] = useState("");
@@ -1075,6 +1069,7 @@ function AddFoodModal({ date, foods, entry, initialMeal, onClose, reportError }:
           <label className="meal-field"><span>Meal</span><select value={meal} onChange={(event) => setMeal(event.target.value as Meal)}>{MEALS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
           <div className="preview-grid">{Object.entries(scaledNutrition(selected, Number(amount) || 0)).map(([key, value]) => <div key={key}><span>{key}</span><strong>{fmt(value, key === "calories")}</strong><small>{key === "calories" ? "kcal" : "g"}</small></div>)}</div>
           <button className="primary-button full-button" onClick={submit} disabled={saving || Number(amount) <= 0}>{saving ? "Saving…" : entry ? "Update entry" : "Add to day"}</button>
+          {entry && onRequestDelete && <button className="entry-delete" onClick={() => onRequestDelete(entry)} disabled={saving}>Delete this entry</button>}
         </> : <div className="quantity-placeholder"><span>↖</span><p>Choose a food to set the amount and preview its nutrition.</p></div>}
       </aside>
     </div>
@@ -1337,7 +1332,11 @@ export default function App() {
     return MEALS.flatMap(({ id }) => grouped[id].map((entry) => ({ id: entry.id, meal: id })));
   }, [day.entries]);
   const finishDrag = useCallback((draggedId: string, target?: DropTarget) => {
-    if (target) void reorder(placementsForDrop(draggedId, target));
+    // Dropping an entry onto itself changes nothing. Without this it fell off the end of the list:
+    // the destination is built without the dragged entry, so looking for it there found nothing and
+    // the insertion point defaulted to the end -- picking up the first row and putting it back sent
+    // it to the bottom.
+    if (target && target.entryId !== draggedId) void reorder(placementsForDrop(draggedId, target));
     setDragging(undefined); setDropTarget(undefined); dropTargetRef.current = undefined;
   }, [placementsForDrop, date]);
   const updatePointerTarget = useCallback((x: number, y: number) => {
@@ -1375,6 +1374,7 @@ export default function App() {
   const gestures = useRowGestures({
     enabled: !selecting && !loading,
     swipeEnabled: !selecting && !reordering,
+    menuEnabled: !loading && !reordering,
     actionsWidth: ROW_ACTIONS_WIDTH,
     onLift: lift,
     onMenu: useCallback((id: string, position: { x: number; y: number }) => setEntryMenu({ id, ...position }), [])
@@ -1448,6 +1448,28 @@ export default function App() {
     try { await repository.copyEntries([entry.id], date, entry.meal); } catch (e) { reportError(e); }
   };
   const menuEntry = entryMenu && day.entries.find((entry) => entry.id === entryMenu.id);
+  /**
+   * A right-click on a row that is part of the selection speaks for the whole selection, the way
+   * the bar above the log does. On any other row it speaks for that row alone.
+   */
+  const menuItems = (entry: LogEntry): MenuItem[] => {
+    if (selecting && selected.has(entry.id)) {
+      const noun = selected.size === 1 ? "entry" : "entries";
+      return [
+        { label: `Copy ${selected.size} ${noun}…`, run: () => openTransfer([...selected], "copy") },
+        { label: `Move ${selected.size} ${noun}…`, run: () => openTransfer([...selected], "move") },
+        { label: `Delete ${selected.size} ${noun}`, run: () => setConfirmingDelete(true), danger: true },
+        { label: "Clear selection", run: endSelecting }
+      ];
+    }
+    return [
+      { label: "Edit", run: () => edit(entry) },
+      { label: "Copy to…", run: () => openTransfer([entry.id], "copy") },
+      { label: "Move to…", run: () => openTransfer([entry.id], "move") },
+      { label: "Duplicate here", run: () => void duplicateEntry(entry) },
+      { label: "Delete", run: () => setConfirmingEntry(entry), danger: true }
+    ];
+  };
   const repeatMeal = async (meal: Meal) => {
     try { await repository.repeatPreviousMeal(date, meal); } catch (e) { reportError(e); }
   };
@@ -1561,7 +1583,7 @@ export default function App() {
                   const rowGestures = gestures.rowProps(entry.id);
                   const revealed = gestures.revealed === entry.id;
                   const slid = gestures.sliding?.id === entry.id ? gestures.sliding.offset : revealed ? -ROW_ACTIONS_WIDTH : 0;
-                  return <div className={`food-row ${selecting ? "is-selecting" : ""} ${reordering ? "is-reordering" : ""} ${selected.has(entry.id) ? "is-selected" : ""} ${dragging === entry.id ? "is-dragged" : ""} ${slid ? "is-slid" : ""} ${gestures.sliding?.id === entry.id ? "is-sliding" : ""} ${indicator}`} role="row" key={entry.id} data-drop-entry={entry.id} data-meal={meal.id} draggable={reordering || finePointer}
+                  return <div className={`food-row ${selecting ? "is-selecting" : ""} ${reordering ? "is-reordering" : ""} ${selected.has(entry.id) ? "is-selected" : ""} ${dragging === entry.id ? "is-dragged" : ""} ${slid ? "is-slid" : ""} ${gestures.sliding?.id === entry.id ? "is-sliding" : ""} ${entryMenu?.id === entry.id ? "is-menu-target" : ""} ${indicator}`} role="row" key={entry.id} data-drop-entry={entry.id} data-meal={meal.id} draggable={reordering || finePointer}
                     onDragStart={(event) => { if (selecting) return; setReordering(true); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", entry.id); setDragging(entry.id); }}
                     onDragEnd={() => reordering && finishDrag(entry.id)}
                     onPointerDown={(event) => {
@@ -1611,19 +1633,23 @@ export default function App() {
       </section>
     </main>
 
-    {modal === "add" && <AddFoodModal date={date} foods={foods} entry={editingEntry} initialMeal={addMeal} onClose={() => { setModal(null); setEditingEntry(undefined); }} reportError={reportError} />}
+    {modal === "add" && <AddFoodModal
+      date={date}
+      foods={foods}
+      entry={editingEntry}
+      initialMeal={addMeal}
+      onClose={() => { setModal(null); setEditingEntry(undefined); }}
+      onRequestDelete={(target) => { setModal(null); setEditingEntry(undefined); setConfirmingEntry(target); }}
+      reportError={reportError}
+    />}
     {modal === "targets" && <TargetsForm initial={targets} onSave={saveTargets} onClose={() => setModal(null)} />}
     {modal === "preferences" && <PreferencesForm initial={{ dayRolloverMinutes, contributionThreshold }} onSave={savePreferences} onClose={() => setModal(null)} />}
     {transfer && <TransferEntriesForm request={transfer} today={menuDate} onCancel={() => setTransfer(undefined)} onConfirm={(request) => void runTransfer(request)} />}
     {entryMenu && menuEntry && <EntryMenu
-      entry={menuEntry}
+      label={selecting && selected.has(menuEntry.id) ? `${selected.size} selected` : menuEntry.name}
+      items={menuItems(menuEntry)}
       position={entryMenu}
       onClose={() => setEntryMenu(undefined)}
-      onEdit={() => edit(menuEntry)}
-      onCopy={() => openTransfer([menuEntry.id], "copy")}
-      onMove={() => openTransfer([menuEntry.id], "move")}
-      onDuplicate={() => void duplicateEntry(menuEntry)}
-      onDelete={() => setConfirmingEntry(menuEntry)}
     />}
     {confirmingEntry && <Modal title="Delete entry" onClose={() => setConfirmingEntry(undefined)}><div className="stack-form">
       <p className="form-note">Delete “{confirmingEntry.name}” from {MEALS.find((meal) => meal.id === confirmingEntry.meal)?.label.toLowerCase()}? Nothing else on the day changes.</p>

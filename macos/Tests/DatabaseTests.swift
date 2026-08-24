@@ -4,6 +4,27 @@ import XCTest
 import WebKit
 @testable import CalorieLogger
 
+/// Defaults that live only for the length of a test.
+///
+/// A `UserDefaults(suiteName:)` writes a plist into `~/Library/Preferences`, and
+/// `removePersistentDomain` empties that file without deleting it, so every run left another
+/// abandoned file behind in the owner's own preferences folder. Nothing here reaches disk.
+final class InMemoryDefaults: UserDefaults {
+    private var storage: [String: Any] = [:]
+
+    convenience init() { self.init(suiteName: nil)! }
+
+    override func object(forKey key: String) -> Any? { storage[key] }
+    override func set(_ value: Any?, forKey key: String) { storage[key] = value }
+    override func removeObject(forKey key: String) { storage.removeValue(forKey: key) }
+    override func dictionaryRepresentation() -> [String: Any] { storage }
+    override func string(forKey key: String) -> String? { storage[key] as? String }
+    override func bool(forKey key: String) -> Bool { storage[key] as? Bool ?? false }
+    override func integer(forKey key: String) -> Int { storage[key] as? Int ?? 0 }
+    override func double(forKey key: String) -> Double { storage[key] as? Double ?? 0 }
+    override func data(forKey key: String) -> Data? { storage[key] as? Data }
+}
+
 final class NativeModelTests: XCTestCase {
     @MainActor
     func testMainMenuProvidesStandardWebEditingShortcuts() throws {
@@ -47,9 +68,9 @@ final class NativeModelTests: XCTestCase {
     @MainActor
     func testNativeSessionPersistsTheWholeSessionAndCanForgetOnlyTheToken() throws {
         let identifier = UUID().uuidString
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "CalorieLoggerTests.\(identifier)"))
+        let defaults = InMemoryDefaults()
         let bridge = WebBridge(defaults: defaults, legacyKeychainService: "com.calorielogger.app.tests.\(identifier)")
-        defer { bridge.clearSession(); defaults.removePersistentDomain(forName: "CalorieLoggerTests.\(identifier)") }
+        defer { bridge.clearSession() }
         let session = StoredSession(baseUrl: "https://calorie-logger.example.test", email: "person@example.test", token: "opaque-token")
 
         try bridge.saveSession(session)
@@ -67,9 +88,9 @@ final class NativeModelTests: XCTestCase {
     func testNativeSessionNeverWritesToKeychain() throws {
         let identifier = UUID().uuidString
         let service = "com.calorielogger.app.tests.\(identifier)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "CalorieLoggerTests.\(identifier)"))
+        let defaults = InMemoryDefaults()
         let bridge = WebBridge(defaults: defaults, legacyKeychainService: service)
-        defer { bridge.clearSession(); defaults.removePersistentDomain(forName: "CalorieLoggerTests.\(identifier)") }
+        defer { bridge.clearSession() }
 
         try bridge.saveSession(StoredSession(baseUrl: "https://calorie-logger.example.test", email: "person@example.test", token: "opaque-token"))
 
@@ -274,32 +295,54 @@ private final class FirstRunBridge: NSObject, WKScriptMessageHandlerWithReply {
 final class StubURLProtocol: URLProtocol {
     nonisolated(unsafe) static var body = Data()
     nonisolated(unsafe) static var status = 200
+    /// A server that answers the whole file however little was asked for.
+    nonisolated(unsafe) static var ignoresRanges = false
+    nonisolated(unsafe) static var rangesAsked: [String] = []
+
+    static func reset() {
+        body = Data(); status = 200; ignoresRanges = false; rangesAsked = []
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
 
     override func startLoading() {
+        var payload = Self.body
+        var status = Self.status
+        if let header = request.value(forHTTPHeaderField: "Range") {
+            Self.rangesAsked.append(header)
+            if !Self.ignoresRanges, let range = Self.slice(header, of: Self.body.count) {
+                payload = Self.body.subdata(in: range)
+                status = 206
+            }
+        }
         let response = HTTPURLResponse(
-            url: request.url!, statusCode: Self.status, httpVersion: "HTTP/1.1", headerFields: nil
+            url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Self.body)
+        client?.urlProtocol(self, didLoad: payload)
         client?.urlProtocolDidFinishLoading(self)
+    }
+
+    private static func slice(_ header: String, of count: Int) -> Range<Int>? {
+        let numbers = header.replacingOccurrences(of: "bytes=", with: "").split(separator: "-")
+        guard numbers.count == 2, let first = Int(numbers[0]), let last = Int(numbers[1]),
+              first < count else { return nil }
+        return first..<min(last + 1, count)
     }
 }
 
 final class UpdateCheckTests: XCTestCase {
     @MainActor
-    private func service(manifest: String) throws -> (UpdateService, UserDefaults, String) {
-        let suite = "CalorieLoggerTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    private func service(manifest: String) throws -> (UpdateService, UserDefaults) {
+        let defaults = InMemoryDefaults()
         defaults.set("https://calorie-logger.example.test", forKey: "CalorieLoggerBackendBaseURL")
         StubURLProtocol.body = Data(manifest.utf8)
         StubURLProtocol.status = 200
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]
-        return (UpdateService(defaults: defaults, session: URLSession(configuration: configuration)), defaults, suite)
+        return (UpdateService(defaults: defaults, session: URLSession(configuration: configuration)), defaults)
     }
 
     private func manifest(build: String) -> String {
@@ -313,8 +356,7 @@ final class UpdateCheckTests: XCTestCase {
     /// returned in silence, so the menu item looked broken exactly when it had most to say.
     @MainActor
     func testExplicitCheckReportsAnAvailableUpdateRatherThanReturningSilently() async throws {
-        let (updates, defaults, suite) = try service(manifest: manifest(build: "999999999999"))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let (updates, defaults) = try service(manifest: manifest(build: "999999999999"))
 
         await updates.check(force: true)
 
@@ -325,8 +367,7 @@ final class UpdateCheckTests: XCTestCase {
 
     @MainActor
     func testExplicitCheckSaysSoWhenThereIsNothingNewer() async throws {
-        let (updates, defaults, suite) = try service(manifest: manifest(build: "1"))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let (updates, defaults) = try service(manifest: manifest(build: "1"))
 
         await updates.check(force: true)
 
@@ -338,8 +379,7 @@ final class UpdateCheckTests: XCTestCase {
     /// is a decision the owner makes once, not a default they discover afterwards.
     @MainActor
     func testAutomaticInstallIsOffUntilItIsTurnedOn() async throws {
-        let (updates, defaults, suite) = try service(manifest: manifest(build: "1"))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let (updates, defaults) = try service(manifest: manifest(build: "1"))
 
         XCTAssertFalse(updates.automaticInstall)
         XCTAssertTrue(updates.automaticChecks)
@@ -351,5 +391,50 @@ final class UpdateCheckTests: XCTestCase {
     func testDownloadProgressIsPartOfTheStateSoItCanBeShown() {
         XCTAssertNotEqual(UpdateService.State.downloading(0.1), .downloading(0.9))
         XCTAssertEqual(UpdateService.State.downloading(0.5), .downloading(0.5))
+    }
+
+    /// The bug this replaces: a progress report still in flight when the transfer finished arrived
+    /// after the state had moved on, and put the window back to "Downloading 93%" for the whole
+    /// install -- a finished update that reads as a stuck one.
+    func testAProgressReportCannotMoveTheStateBackToDownloading() {
+        XCTAssertEqual(UpdateService.progressUpdate(0.93, whileShowing: .downloading(0.5)), .downloading(0.93))
+        XCTAssertNil(UpdateService.progressUpdate(0.99, whileShowing: .installing))
+        XCTAssertNil(UpdateService.progressUpdate(0.99, whileShowing: .idle))
+        XCTAssertNil(UpdateService.progressUpdate(0.99, whileShowing: .checking))
+    }
+
+    /// The archive is asked for in pieces, because one large response ran at full speed for about
+    /// 4.5 MB and then trickled the rest at a few kilobytes a second. The pieces have to be put
+    /// back together in the right order, or the checksum that follows would reject them.
+    @MainActor
+    func testTheArchiveIsAssembledInOrderFromRangedPieces() async throws {
+        let (updates, _) = try service(manifest: manifest(build: "1"))
+        defer { StubURLProtocol.reset() }
+        let size = 1_048_576 * 2 + 500
+        StubURLProtocol.body = Data((0..<size).map { UInt8($0 % 251) })
+        let url = try XCTUnwrap(URL(string: "https://calorie-logger.example.test/api/calorie-logger/downloads/CalorieLogger.zip"))
+
+        let file = try await updates.downloadForTesting(url, size: size)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        XCTAssertEqual(try Data(contentsOf: file), StubURLProtocol.body)
+        XCTAssertEqual(StubURLProtocol.rangesAsked, ["bytes=0-1048575", "bytes=1048576-2097151", "bytes=2097152-2097651"])
+    }
+
+    /// A server that ignores the range header answers the whole file at once, and that is a
+    /// complete download rather than the first piece of one.
+    @MainActor
+    func testAServerThatIgnoresRangesStillProducesTheWholeArchive() async throws {
+        let (updates, _) = try service(manifest: manifest(build: "1"))
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.body = Data(repeating: 0x7a, count: 1_048_576 * 2)
+        StubURLProtocol.ignoresRanges = true
+        let url = try XCTUnwrap(URL(string: "https://calorie-logger.example.test/api/calorie-logger/downloads/CalorieLogger.zip"))
+
+        let file = try await updates.downloadForTesting(url, size: 1_048_576 * 2)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        XCTAssertEqual(try Data(contentsOf: file), StubURLProtocol.body)
+        XCTAssertEqual(StubURLProtocol.rangesAsked.count, 1, "the whole file arrived, so nothing more should be asked for")
     }
 }

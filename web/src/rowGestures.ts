@@ -18,8 +18,8 @@ import type { PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent }
 const HOLD_MS = 400;
 /** Movement allowed during the hold. Fingers are never perfectly still. */
 const HOLD_DRIFT = 8;
-/** Sideways movement that commits to a swipe rather than a scroll. */
-const SWIPE_START = 12;
+/** How much more sideways than vertical a movement must be to count as a swipe. */
+const SWIPE_BIAS = 1.4;
 /** Share of the revealed width that has to be crossed for the actions to stay open. */
 const SWIPE_COMMIT = 0.4;
 
@@ -45,6 +45,8 @@ export interface RowGestureOptions {
   enabled: boolean;
   /** False while reordering, when a swipe would fight the drag. */
   swipeEnabled: boolean;
+  /** The context menu stands separately: it still has something to offer while selecting. */
+  menuEnabled: boolean;
   /** How far a row slides to uncover its actions. */
   actionsWidth: number;
   onLift(id: string): void;
@@ -65,7 +67,7 @@ export interface RowGestures {
   claimedClick(): boolean;
 }
 
-export function useRowGestures({ enabled, swipeEnabled, actionsWidth, onLift, onMenu }: RowGestureOptions): RowGestures {
+export function useRowGestures({ enabled, swipeEnabled, menuEnabled, actionsWidth, onLift, onMenu }: RowGestureOptions): RowGestures {
   const pending = useRef<Pending | null>(null);
   const detach = useRef<(() => void) | undefined>(undefined);
   const lastPointerType = useRef("mouse");
@@ -127,15 +129,22 @@ export function useRowGestures({ enabled, swipeEnabled, actionsWidth, onLift, on
       const dx = moveEvent.clientX - current.x;
       const dy = moveEvent.clientY - current.y;
       if (current.phase === "waiting") {
-        if (swipeEnabled && Math.abs(dx) > SWIPE_START && Math.abs(dx) > Math.abs(dy)) {
-          window.clearTimeout(current.timer);
-          current.timer = undefined;
-          current.phase = "swiping";
-        } else if (Math.abs(dx) > HOLD_DRIFT || Math.abs(dy) > HOLD_DRIFT) {
+        // Direction decides, and only once the finger has left the hold's tolerance. Asking for a
+        // wider sideways movement than that tolerance never worked: a real finger reports a move
+        // every few pixels, so the first report past the tolerance abandoned the gesture as a
+        // scroll before any of them could reach the wider threshold, and the swipe never began.
+        if (Math.abs(dx) <= HOLD_DRIFT && Math.abs(dy) <= HOLD_DRIFT) return;
+        // Clearly sideways, not merely more sideways than not: an ambiguous diagonal is far more
+        // often the start of a scroll, and a missed swipe costs another try where a blocked scroll
+        // costs the page.
+        if (!swipeEnabled || Math.abs(dx) <= Math.abs(dy) * SWIPE_BIAS) {
           // The page is scrolling. Let it, and take nothing.
           settle();
           return;
         }
+        window.clearTimeout(current.timer);
+        current.timer = undefined;
+        current.phase = "swiping";
       }
       if (current.phase !== "swiping") return;
       moveEvent.preventDefault();
@@ -164,10 +173,10 @@ export function useRowGestures({ enabled, swipeEnabled, actionsWidth, onLift, on
   const onContextMenu = useCallback((id: string, event: ReactMouseEvent) => {
     // Android raises this in the middle of a hold, where it would cover the row being lifted.
     event.preventDefault();
-    if (!enabled || lastPointerType.current !== "mouse") return;
+    if (!menuEnabled || lastPointerType.current !== "mouse") return;
     setRevealed(undefined);
     onMenu(id, { x: event.clientX, y: event.clientY });
-  }, [enabled, onMenu]);
+  }, [menuEnabled, onMenu]);
 
   const rowProps = useCallback((id: string) => ({
     onPointerDown: (event: ReactPointerEvent) => onPointerDown(id, event),

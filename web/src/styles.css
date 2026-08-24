@@ -75,6 +75,10 @@ main { width: min(1440px, calc(100% - 48px)); margin: 0 auto; flex: 1; }
 .danger-button { background: var(--warning); color: white; }
 .danger-button:hover { background: #884330; }
 .full-button { width: 100%; margin-top: auto; }
+/* Directly under "Update entry", quiet enough not to compete with it. */
+.entry-delete { width: 100%; margin-top: 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; padding: 9px; color: var(--warning); cursor: pointer; font-size: 13px; font-weight: 600; }
+.entry-delete:hover { border-color: rgba(165,84,60,.35); background: rgba(165,84,60,.08); }
+.entry-delete:disabled { opacity: .5; cursor: default; }
 button:disabled { opacity: .4; cursor: not-allowed; }
 
 .setup-banner { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 17px 21px; margin-bottom: 18px; background: #e7e8dc; border: 1px solid #d8d9ca; border-radius: 8px; }
@@ -136,6 +140,9 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .food-row:hover, .food-row.is-selected { background: rgba(255,255,255,.47); }
 .food-row.is-reordering { cursor: grab; }
 .food-row.is-dragged { opacity: .3; }
+/* Which row the context menu is about. Without it the menu names nothing and the owner has to
+   remember where they clicked. */
+.food-row.is-menu-target { background: var(--green-soft); box-shadow: inset 0 0 0 2px var(--green); }
 /* Only a slid row clips: the drop indicator sits one pixel outside the row and must not be cut. */
 .food-row.is-slid, .food-row.is-sliding { overflow: hidden; }
 /* The actions slide in over the numbers rather than pushing the row aside: sliding the row would
@@ -176,7 +183,12 @@ input[type="checkbox"] { accent-color: var(--green); width: 15px; height: 15px; 
 .meal-log.is-dragging, .meal-log.is-dragging * { user-select: none; }
 /* Sticky, because the entries being chosen are often further down the day than the bar that acts
    on them. Sized just under body text: quieter than the log, but not the fine print it was. */
-.selection-bar, .mode-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 7px; min-height: 44px; margin-bottom: 7px; padding: 6px 8px 6px 12px; background: var(--green); color: white; border-radius: 7px; font-size: 13px; }
+.selection-bar, .mode-bar { display: flex; align-items: center; gap: 7px; min-height: 44px; padding: 6px 8px 6px 12px; background: var(--green); color: white; border-radius: 7px; font-size: 13px; }
+.selection-bar { position: sticky; top: 0; z-index: 5; margin-bottom: 7px; }
+/* The reorder bar appears in the middle of a gesture, with a finger already resting on a row. A bar
+   in the flow pushes that row down and out from under it, so the drop lands on whatever slid into
+   its place. This one floats: the list underneath never moves. */
+.mode-bar { position: fixed; z-index: 40; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); width: min(430px, calc(100vw - 24px)); transform: translateX(-50%); box-shadow: 0 14px 38px rgba(37,38,33,.34); }
 .selection-bar span { flex: 1; }
 .selection-bar button, .mode-bar button { min-height: 32px; border: 0; background: rgba(255,255,255,.14); color: white; border-radius: 5px; padding: 6px 11px; cursor: pointer; font-size: 13px; font-weight: 600; }
 .selection-bar button:hover, .mode-bar button:hover { background: rgba(255,255,255,.24); }
@@ -523,7 +535,7 @@ input, select, textarea { width: 100%; min-height: 40px; border: 1px solid #cecc
   .meal-repeat svg { width: 18px; height: 18px; }
   .meal-add svg { width: 14px; height: 14px; }
   .check-cell { width: 25px; flex-basis: 25px; }
-  .selection-bar, .mode-bar { margin-bottom: 5px; }
+  .selection-bar { margin-bottom: 5px; }
   .setup-banner { align-items: start; }
   .setup-banner p { display: block; margin: 4px 0 0; }
   .section-heading { align-items: start; }
@@ -561,6 +573,7 @@ input, select, textarea { width: 100%; min-height: 40px; border: 1px solid #cecc
   .quantity-panel { display: none; }
   .quantity-panel.active-sheet { position: absolute; z-index: 3; inset: 0; display: flex; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px 20px calc(20px + env(safe-area-inset-bottom)); box-shadow: 0 -8px 35px rgba(37,38,33,.14); }
   .quantity-panel .full-button { position: sticky; bottom: 0; margin-top: auto; box-shadow: 0 10px 0 #f0eee7, 0 -10px 20px #f0eee7; }
+  .quantity-panel .entry-delete { position: sticky; bottom: 0; background: #f0eee7; }
   .quantity-placeholder { display: none; }
   /* A viewfinder wants the screen. It is still the surface's own box rather than a scroller,
      so the status line and the buttons below it stay reachable by scrolling the column. */

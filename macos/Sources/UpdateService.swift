@@ -34,6 +34,9 @@ final class UpdateService: ObservableObject {
     /// Often enough that an update is taken within a day of a deployment, rarely enough that a
     /// server which is off, or behind a tunnel that is down, is not polled pointlessly.
     private static let checkInterval: TimeInterval = 6 * 3600
+    /// How much of the archive is asked for at a time. Comfortably inside the window where a
+    /// single large response stops being delivered at full speed.
+    private static let chunkBytes = 1_048_576
 
     @Published private(set) var available: MacRelease?
     @Published private(set) var state: State = .idle
@@ -50,7 +53,6 @@ final class UpdateService: ObservableObject {
     private let defaults: UserDefaults
     private let session: URLSession
     private var timer: Timer?
-    private var progressObservation: NSKeyValueObservation?
 
     init(defaults: UserDefaults = .standard, session: URLSession = .shared) {
         self.defaults = defaults
@@ -206,44 +208,90 @@ final class UpdateService: ObservableObject {
 
     // MARK: - Steps
 
-    /// Downloads to a file, reporting the fraction received as it arrives.
+    /// The state a progress report produces, or nothing when it no longer describes what is shown.
     ///
-    /// A download task rather than `AsyncBytes`: iterating a six-megabyte body one byte at a time
-    /// costs more than fetching it does, so the progress would have been paid for by making the
-    /// thing it measures slower. `URLSession` writes straight to disk and `Progress` reports itself.
+    /// Kept as a guard even though the pieces now report in order: anything that moves the bar has
+    /// to be about the download on screen, or the window goes back to "Downloading 93%" and stays
+    /// there for the whole install, which reads as a hang at the moment the work is nearly done.
+    nonisolated static func progressUpdate(_ fraction: Double, whileShowing state: State) -> State? {
+        guard case .downloading = state else { return nil }
+        return .downloading(fraction)
+    }
+
+    func applyDownloadProgress(_ fraction: Double) {
+        if let next = Self.progressUpdate(fraction, whileShowing: state) { state = next }
+    }
+
+    /// The download step on its own, for the tests that prove the archive is assembled correctly.
+    func downloadForTesting(_ url: URL, size: Int) async throws -> URL {
+        try await download(url, expecting: MacRelease(version: "0", build: "0", file: "f", size: size, sha256: "", url: url.path))
+    }
+
+    /// Downloads the archive a piece at a time.
+    ///
+    /// Asking for the whole file in one response is what made an update take minutes. The transfer
+    /// ran at full speed for about 4.5 MB and then trickled the rest at a few kilobytes a second --
+    /// the same file, from the same server, over the same tunnel that `curl` pulls in 0.67 seconds,
+    /// and it stopped at the same place every time, which is a flow-control window rather than the
+    /// network being slow. Asking in pieces that finish well inside that window avoids it
+    /// altogether: measured at 0.7 seconds against 100, and the same on every run.
+    ///
+    /// The pieces are written straight to the file in the order they are asked for, and the
+    /// manifest's checksum is verified over the finished file, so anything misassembled is refused
+    /// rather than installed.
     private func download(_ url: URL, expecting release: MacRelease) async throws -> URL {
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 300
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("CalorieLoggerUpdate-\(UUID().uuidString).zip")
-        defer { progressObservation = nil }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let task = session.downloadTask(with: request) { location, response, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                guard let location,
-                      let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                    continuation.resume(throwing: UpdateFailure.message("The update could not be downloaded from the server."))
-                    return
-                }
-                // The temporary file is deleted the moment this handler returns, so it has to be
-                // moved here rather than anywhere further along.
-                do {
-                    try FileManager.default.moveItem(at: location, to: destination)
-                    continuation.resume(returning: destination)
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-            progressObservation = task.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
-                let fraction = progress.fractionCompleted
-                Task { @MainActor in self?.state = .downloading(fraction) }
-            }
-            task.resume()
+        guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
+            throw UpdateFailure.message("The update could not be saved to this device.")
         }
+        let handle = try FileHandle(forWritingTo: destination)
+        defer { try? handle.close() }
+
+        // A manifest without a size, and a server that answers the whole file regardless of what
+        // was asked for, both end up here: one request, one write, done.
+        guard release.size > 0 else {
+            try handle.write(contentsOf: try await piece(of: url, range: nil).data)
+            return destination
+        }
+
+        var received = 0
+        while received < release.size {
+            let last = min(received + Self.chunkBytes, release.size) - 1
+            let answer = try await piece(of: url, range: (received, last))
+            guard !answer.data.isEmpty else {
+                throw UpdateFailure.message("The update stopped arriving from the server.")
+            }
+            try handle.write(contentsOf: answer.data)
+            received += answer.data.count
+            applyDownloadProgress(min(1, Double(received) / Double(release.size)))
+            if !answer.partial { break }
+        }
+        return destination
+    }
+
+    /// One piece of the archive, asked for again once if the first attempt fails.
+    ///
+    /// A download made of several requests has several chances to meet a blip, and asking again
+    /// costs a fraction of a second where failing costs the owner the whole update.
+    private func piece(of url: URL, range: (first: Int, last: Int)?) async throws -> (data: Data, partial: Bool) {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 60
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        if let range { request.setValue("bytes=\(range.first)-\(range.last)", forHTTPHeaderField: "Range") }
+        for attempt in 0..<2 {
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    throw UpdateFailure.message("The update could not be downloaded from the server.")
+                }
+                // 206 means the server honoured the range and there is more to ask for.
+                return (data, http.statusCode == 206)
+            } catch {
+                if attempt == 1 { throw error }
+            }
+        }
+        throw UpdateFailure.message("The update could not be downloaded from the server.")
     }
 
     private nonisolated static func verify(_ archive: URL, matches expected: String) throws {

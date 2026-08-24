@@ -1434,8 +1434,12 @@ describe("entry gestures and bulk actions", () => {
     render(<App />);
     await screen.findByText("Oats");
 
+    // A finger reports its position every few pixels rather than in one jump, and every one of
+    // those small reports used to be read as the start of a scroll, so the swipe never began.
     fireEvent.pointerDown(rowOf("Oats"), { ...touch, clientX: 260, clientY: 40 });
-    fireEvent.pointerMove(document, { ...touch, clientX: 220, clientY: 42 });
+    for (const x of [256, 250, 242, 230, 214, 196, 178]) {
+      fireEvent.pointerMove(document, { ...touch, clientX: x, clientY: 41 });
+    }
     fireEvent.pointerUp(document, { ...touch, clientX: 160, clientY: 42 });
 
     expect(screen.getByRole("button", { name: "Copy…" })).toBeTruthy();
@@ -1485,5 +1489,68 @@ describe("entry gestures and bulk actions", () => {
     await waitFor(() => expect(reorder).toHaveBeenCalledWith([
       { id: "b", meal: "breakfast" }, { id: "a", meal: "breakfast" }
     ]));
+  });
+  it("leaves an entry where it is when it is dropped on itself", async () => {
+    await day([entry("a", "Oats", "breakfast", 0), entry("b", "Toast", "breakfast", 1)]);
+    const reorder = vi.spyOn(repository, "reorderEntries");
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Reorder entries/ }));
+    const row = screen.getByRole("button", { name: "Reorder Oats" }).closest<HTMLElement>("[role=row]")!;
+    row.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, left: 0, right: 500, bottom: 60, width: 500, height: 60, toJSON: () => ({}) });
+    const data = new Map<string, string>();
+    const dataTransfer = { effectAllowed: "move", setData: (t: string, v: string) => data.set(t, v), getData: (t: string) => data.get(t) ?? "" };
+
+    fireEvent.dragStart(row, { dataTransfer });
+    fireEvent.dragOver(row, { clientX: 20, clientY: 5, dataTransfer });
+    fireEvent.drop(row, { clientX: 20, clientY: 5, dataTransfer });
+
+    // Picking the first entry up and putting it back sent it to the bottom of the meal, because the
+    // insertion point was searched for in a list the dragged entry had already been taken out of.
+    await waitFor(() => expect(screen.getByText("Drag entries into place")).toBeTruthy());
+    expect(reorder).not.toHaveBeenCalled();
+  });
+
+  it("offers the selection's own actions when a selected entry is right-clicked", async () => {
+    await day([entry("a", "Oats", "breakfast", 0), entry("b", "Toast", "breakfast", 1)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Select entries/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all Breakfast" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Select Oats" }).closest<HTMLElement>("[role=row]")!, { clientX: 90, clientY: 120 });
+
+    expect(screen.getByRole("menuitem", { name: "Copy 2 entries…" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move 2 entries…" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Delete 2 entries" })).toBeTruthy();
+  });
+
+  it("marks the row a context menu belongs to", async () => {
+    await day([entry("a", "Oats", "breakfast", 0), entry("b", "Toast", "breakfast", 1)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.contextMenu(rowOf("Toast"), { clientX: 90, clientY: 120 });
+
+    expect(rowOf("Toast").className).toContain("is-menu-target");
+    expect(rowOf("Oats").className).not.toContain("is-menu-target");
+  });
+
+  it("deletes an entry from the editor that opened it, once confirmed", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    const deleteEntries = vi.spyOn(repository, "deleteEntries");
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Oats" }));
+    await screen.findByRole("dialog", { name: "Edit entry" });
+    fireEvent.click(screen.getByRole("button", { name: "Delete this entry" }));
+    expect(deleteEntries).not.toHaveBeenCalled();
+
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Delete entry" })).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleteEntries).toHaveBeenCalledWith(["a"]));
   });
 });

@@ -131,6 +131,31 @@ async function assertAddFoodLayout(viewport, phone) {
 }
 
 /**
+ * Reorder mode opens in the middle of a gesture, with a finger already resting on a row. Its bar
+ * has to float: one in the flow pushes the list down and the drop lands on whatever row slid into
+ * the place of the one being held.
+ */
+async function assertReorderBarDoesNotMoveTheList(viewport) {
+  const context = await browser.newContext({ viewport });
+  const page = await context.newPage();
+  await login(page);
+  const firstRow = page.locator(".food-row").first();
+  const before = await firstRow.boundingBox();
+  assert.ok(before, "the day should have at least one entry to reorder");
+
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await page.getByRole("button", { name: /Reorder entries/ }).click();
+  await page.locator(".mode-bar").waitFor();
+
+  assert.equal(await page.locator(".mode-bar").evaluate((element) => getComputedStyle(element).position), "fixed");
+  const after = await firstRow.boundingBox();
+  assert.ok(after);
+  assert.ok(Math.abs(after.y - before.y) < 1,
+    `entering reorder mode moved the list by ${(after.y - before.y).toFixed(1)}px`);
+  await context.close();
+}
+
+/**
  * The copy/move dialog draws its own calendar, because the browser's date popup is drawn outside
  * the page at a size no rule can reach. Ours has to fit a phone: no sideways overflow, one
  * scroller, and the button that performs the copy reachable at the end of it.
@@ -248,6 +273,7 @@ try {
   await assertAddFoodLayout({ width: 768, height: 1024 }, false);
   await assertAddFoodLayout({ width: 1024, height: 768 }, false);
   await assertTransferDialog({ width: 390, height: 844 });
+  await assertReorderBarDoesNotMoveTheList({ width: 390, height: 844 });
 
   await first.getByRole("button", { name: "Open settings" }).click();
   await first.getByRole("button", { name: /Connection/ }).click();
