@@ -1,5 +1,5 @@
 import { estimateFood as requestFoodEstimate, externalFoods, macRelease as requestMacRelease, serverDownloadURL } from "./api";
-import { localStore, type Preferences } from "./localStore";
+import { localStore, type DaySettings } from "./localStore";
 import type {
   DayData, EntryPlacement, ExportDocument, ExportRequest, ExternalFoodResult,
   ExternalFoodSearchResponse, Food, FoodEstimate, FoodEstimateRequest, FoodInput, FoodUsage, Meal, Targets
@@ -33,9 +33,8 @@ export interface FoodRepository {
   /** Re-dates the entries themselves, keeping their ids so the move replicates as one change. */
   moveEntries(ids: string[], destinationDate: string, meal?: Meal): Promise<void>;
   repeatPreviousMeal(date: string, meal: Meal): Promise<void>;
-  saveTargets(targets: Targets): Promise<Targets>;
-  /** When a day starts, and how large a share of a target makes a food worth flagging. */
-  savePreferences(preferences: Preferences): Promise<Preferences>;
+  /** The goals, when a day starts, and how large a share of a target is worth flagging: one record. */
+  saveDaySettings(settings: DaySettings): Promise<DaySettings>;
   /** Empties this account on every device and restores the shipped catalogue. */
   resetData(): Promise<void>;
   /** The desktop application this server offers, or null when it has never published one. */
@@ -61,8 +60,7 @@ class LocalFoodRepository implements FoodRepository {
   copyEntries = (ids: string[], destinationDate: string, meal?: Meal) => localStore.copyEntries(ids, destinationDate, meal);
   moveEntries = (ids: string[], destinationDate: string, meal?: Meal) => localStore.moveEntries(ids, destinationDate, meal);
   repeatPreviousMeal = (date: string, meal: Meal) => localStore.repeatPreviousMeal(date, meal);
-  saveTargets = (targets: Targets) => localStore.saveTargets(targets);
-  savePreferences = (preferences: Preferences) => localStore.savePreferences(preferences);
+  saveDaySettings = (settings: DaySettings) => localStore.saveDaySettings(settings);
   resetData = () => localStore.resetToDefaults();
   macRelease = () => requestMacRelease();
   downloadURL = (path: string) => serverDownloadURL(path);
@@ -74,11 +72,20 @@ export type { MacReleaseInfo } from "./api";
 
 declare global {
   interface Window {
+    // What the macOS menu bar can ask the interface to do. Every one of these opens the same
+    // panel the gear opens elsewhere, so each surface has exactly one implementation.
     calorieLogger?: {
       openAddFood(): void;
       openTargets(): void;
       openExport(): void;
       openConnection(): void;
+      openSync(): void;
+      openReset(): void;
+      openAbout(): void;
+      startSelecting(): void;
+      startReordering(): void;
+      previousDay(): void;
+      nextDay(): void;
       jumpToToday(): void;
     };
   }

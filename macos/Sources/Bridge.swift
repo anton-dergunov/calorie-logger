@@ -16,6 +16,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
     private let legacyKeychainService: String
     var onSummary: ((MenuSummary) -> Void)?
     var onConnectionState: ((String) -> Void)?
+    var onTextEditingChanged: ((Bool) -> Void)?
 
     init(defaults: UserDefaults = .standard, legacyKeychainService: String = "com.calorielogger.app.session") {
         self.defaults = defaults
@@ -55,6 +56,10 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             case "updateMenuState":
                 let request: MenuStateRequest = try decode(payload)
                 DispatchQueue.main.async { [weak self] in self?.onConnectionState?(request.state) }
+                successVoid(replyHandler)
+            case "setTextEditing":
+                let request: TextEditingRequest = try decode(payload)
+                DispatchQueue.main.async { [weak self] in self?.onTextEditingChanged?(request.editing) }
                 successVoid(replyHandler)
             case "saveExport":
                 let request: ExportSaveRequest = try decode(payload)

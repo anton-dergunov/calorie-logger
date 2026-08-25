@@ -52,6 +52,12 @@ struct MenuStateRequest: Decodable {
     let state: String
 }
 
+/// Whether a text field in the page holds focus, which is what decides whether the Edit menu's
+/// commands mean anything.
+struct TextEditingRequest: Decodable {
+    let editing: Bool
+}
+
 enum LoggerError: LocalizedError {
     case invalid(String)
     case unavailable(String)

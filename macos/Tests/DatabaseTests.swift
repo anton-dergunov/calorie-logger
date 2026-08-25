@@ -37,6 +37,107 @@ final class NativeModelTests: XCTestCase {
         XCTAssertEqual(editMenu.item(withTitle: "Select All")?.keyEquivalent, "a")
     }
 
+    /// The menu bar is the native host's only entry point -- the interface hides its own settings
+    /// button there -- so it has to reach everything, laid out the way a Mac application lays it out.
+    @MainActor
+    func testMenuBarCarriesTheWholeInterface() throws {
+        let delegate = AppDelegate()
+        delegate.installMainMenu()
+        let mainMenu = try XCTUnwrap(NSApp.mainMenu)
+
+        XCTAssertEqual(mainMenu.items.compactMap { $0.submenu?.title }.filter { !$0.isEmpty },
+                       ["File", "Edit", "Day", "Window"])
+
+        let appMenu = try XCTUnwrap(mainMenu.items.first?.submenu)
+        for title in ["About Calorie Logger", "Check for Updates…", "Settings…", "Connection…", "Sync…", "Quit Calorie Logger"] {
+            XCTAssertNotNil(appMenu.item(withTitle: title), "the application menu is missing \(title)")
+        }
+        XCTAssertEqual(appMenu.item(withTitle: "Settings…")?.keyEquivalent, ",")
+
+        let fileMenu = try XCTUnwrap(mainMenu.items.first(where: { $0.submenu?.title == "File" })?.submenu)
+        XCTAssertEqual(fileMenu.item(withTitle: "Add Food…")?.keyEquivalent, "n")
+        XCTAssertEqual(fileMenu.item(withTitle: "Export Data…")?.keyEquivalent, "e")
+        XCTAssertNotNil(fileMenu.item(withTitle: "Reset App Data…"))
+
+        let dayMenu = try XCTUnwrap(mainMenu.items.first(where: { $0.submenu?.title == "Day" })?.submenu)
+        for title in ["Today", "Previous Day", "Next Day", "Select Entries", "Reorder Entries", "Targets & Day…"] {
+            XCTAssertNotNil(dayMenu.item(withTitle: title), "the day menu is missing \(title)")
+        }
+        // Command-comma belongs to Settings, so the goals take a modifier of their own.
+        XCTAssertEqual(dayMenu.item(withTitle: "Targets & Day…")?.keyEquivalentModifierMask, [.command, .option])
+    }
+
+    /// The editing commands act on whatever holds focus. Left to itself the web view answers for
+    /// all of them all the time, which offered Copy with nothing selected and a Select All that
+    /// selected the whole page.
+    @MainActor
+    func testEditingCommandsFollowTheFocusOfTheInterface() throws {
+        let delegate = AppDelegate()
+        delegate.installMainMenu()
+        let editMenu = try XCTUnwrap(NSApp.mainMenu?.items.first(where: { $0.submenu?.title == "Edit" })?.submenu)
+        let commands = ["Undo", "Redo", "Cut", "Copy", "Paste", "Select All"]
+
+        for title in commands {
+            XCTAssertEqual(editMenu.item(withTitle: title)?.isEnabled, false, "\(title) is live with nothing focused")
+        }
+
+        delegate.setTextEditing(true)
+        for title in commands {
+            XCTAssertEqual(editMenu.item(withTitle: title)?.isEnabled, true, "\(title) is dead inside a text field")
+        }
+
+        delegate.setTextEditing(false)
+        XCTAssertEqual(editMenu.item(withTitle: "Select All")?.isEnabled, false)
+    }
+
+    /// Opening the app is a request to see today. Being started at login is not: the menu bar is
+    /// the whole point of running at login, and a window over what someone is doing as they log in
+    /// is an interruption nobody asked for.
+    @MainActor
+    func testLoginLaunchesStayInTheMenuBarAndOpeningTheAppDoesNot() {
+        let launchd = ["XPC_SERVICE_NAME": "application.com.calorielogger.app.1234.5678"]
+        let byHand = ["XPC_SERVICE_NAME": "0"]
+
+        XCTAssertTrue(LaunchContext.startsInMenuBarOnly(
+            launchUserInfo: [LaunchContext.isDefaultLaunchKey: false],
+            environment: launchd, bundleIdentifier: "com.calorielogger.app", showWindowAtLogin: false))
+
+        XCTAssertFalse(LaunchContext.startsInMenuBarOnly(
+            launchUserInfo: [LaunchContext.isDefaultLaunchKey: true],
+            environment: byHand, bundleIdentifier: "com.calorielogger.app", showWindowAtLogin: false))
+
+        // Someone who would rather see the window at login says so, and that answer wins.
+        XCTAssertFalse(LaunchContext.startsInMenuBarOnly(
+            launchUserInfo: [LaunchContext.isDefaultLaunchKey: false],
+            environment: launchd, bundleIdentifier: "com.calorielogger.app", showWindowAtLogin: true))
+    }
+
+    /// Two independent signals, because either one alone has a hole: AppKit reports an automatic
+    /// launch for reasons other than login, and the service name is the only evidence launchd
+    /// leaves behind.
+    @MainActor
+    func testEitherSignalOnItsOwnIsEnoughToRecogniseALoginLaunch() {
+        XCTAssertTrue(LaunchContext.startsInMenuBarOnly(
+            launchUserInfo: nil,
+            environment: ["XPC_SERVICE_NAME": "application.com.calorielogger.app.1.2"],
+            bundleIdentifier: "com.calorielogger.app", showWindowAtLogin: false))
+
+        XCTAssertTrue(LaunchContext.startsInMenuBarOnly(
+            launchUserInfo: [LaunchContext.isDefaultLaunchKey: false],
+            environment: [:], bundleIdentifier: "com.calorielogger.app", showWindowAtLogin: false))
+
+        // No evidence at all means someone opened it, which is the only safe way to be wrong.
+        XCTAssertFalse(LaunchContext.startsInMenuBarOnly(
+            launchUserInfo: nil, environment: [:],
+            bundleIdentifier: "com.calorielogger.app", showWindowAtLogin: false))
+    }
+
+    func testTextEditingRequestDecodesTheInterfacesFocusReport() throws {
+        let request: TextEditingRequest = try JSONDecoder().decode(
+            TextEditingRequest.self, from: Data("{\"editing\":true}".utf8))
+        XCTAssertTrue(request.editing)
+    }
+
     func testMenuPopoverIsPositionedDirectlyBelowItsStatusItem() {
         let anchor = NSRect(x: 900, y: 1076, width: 32, height: 24)
         let origin = menuPopoverOrigin(
@@ -175,6 +276,19 @@ final class WebInterfaceTests: XCTestCase {
         XCTAssertEqual(WebInterfaceSchemeHandler.contentType(for: "bin"), "application/octet-stream")
     }
 
+    /// A login launch leaves the window unshown, and the menu bar's totals come from the interface,
+    /// so the interface has to run anyway. WebKit is free to throttle a view whose window was never
+    /// ordered front; this is the thing that would silently empty the menu bar if it ever did.
+    @MainActor
+    func testPackagedInterfaceRunsWithItsWindowNeverShown() async throws {
+        let webView = try await loadPackagedInterface(showWindow: false)
+
+        let childValue = try await webView.evaluateJavaScript("document.getElementById('root')?.childElementCount || 0")
+        let text = try await webView.evaluateJavaScript("document.body.innerText") as? String
+        XCTAssertGreaterThan((childValue as? NSNumber)?.intValue ?? 0, 0, "Rendered page text was: \(text ?? "<empty>")")
+        XCTAssertTrue(text?.localizedCaseInsensitiveContains("Sign in") == true, "Rendered page text was: \(text ?? "<empty>")")
+    }
+
     @MainActor
     func testPackagedInterfaceRendersFirstRunConnectionInsideWebKit() async throws {
         let webView = try await loadPackagedInterface()
@@ -238,7 +352,7 @@ final class WebInterfaceTests: XCTestCase {
     }
 
     @MainActor
-    private func loadPackagedInterface() async throws -> WKWebView {
+    private func loadPackagedInterface(showWindow: Bool = true) async throws -> WKWebView {
         let root = try XCTUnwrap(WebInterface.bundledInterfaceDirectory(), "The Vite interface was not embedded in the test host app.")
         let bridge = FirstRunBridge()
         let configuration = WKWebViewConfiguration()
@@ -251,7 +365,7 @@ final class WebInterfaceTests: XCTestCase {
         // here and crashes AppKit on the next transaction flush.
         window.isReleasedWhenClosed = false
         window.contentView = webView
-        window.orderFront(nil)
+        if showWindow { window.orderFront(nil) }
         addTeardownBlock { @MainActor in
             window.close()
             configuration.userContentController.removeScriptMessageHandler(forName: "calorieLogger", contentWorld: .page)

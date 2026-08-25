@@ -1008,7 +1008,7 @@ describe("calorie log design", () => {
       targets: { calories: null, protein: null, fat: null, carbs: null }, foods: []
     };
     await seed(fixture);
-    const saveTargets = vi.spyOn(repository, "saveTargets");
+    const saveDaySettings = vi.spyOn(repository, "saveDaySettings");
     render(<App />);
 
     await screen.findByRole("button", { name: "Add food to Breakfast" });
@@ -1020,8 +1020,8 @@ describe("calorie log design", () => {
     fireEvent.change(inputs[3], { target: { value: "200" } });
 
     expect(inputs[0].value).toBe("1820");
-    fireEvent.click(screen.getByRole("button", { name: "Save targets" }));
-    await waitFor(() => expect(saveTargets).toHaveBeenCalledWith({ calories: 1820, protein: 120, fat: 60, carbs: 200 }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saveDaySettings).toHaveBeenCalledWith(expect.objectContaining({ targets: { calories: 1820, protein: 120, fat: 60, carbs: 200 } })));
   });
 
   it("offers a left-side home control on another date without overlapping navigation", async () => {
@@ -1271,20 +1271,23 @@ describe("high-contribution foods", () => {
     expect(rows.map((row) => cells(row)[4].className)).toEqual(["", "", ""]);
   });
 
-  it("saves a changed threshold alongside the day rollover", async () => {
+  it("saves a changed threshold alongside the targets and the day rollover", async () => {
     await seed({ day: { date: localDateString(), entries: [], totals: {} }, targets: TARGETS, foods: [] });
-    const savePreferences = vi.spyOn(repository, "savePreferences");
+    const saveDaySettings = vi.spyOn(repository, "saveDaySettings");
     render(<App />);
 
     await screen.findByRole("button", { name: "Add food to Breakfast" });
     fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
-    fireEvent.click(screen.getByRole("button", { name: /Preferences/ }));
-    const threshold = screen.getByRole("spinbutton") as HTMLInputElement;
+    fireEvent.click(screen.getByRole("button", { name: /Targets & day/ }));
+    // The goals and the day they are read against are one panel now, so the threshold is the last
+    // of five numbers rather than the only one.
+    const numbers = screen.getAllByRole("spinbutton") as HTMLInputElement[];
+    const threshold = numbers[numbers.length - 1];
     expect(threshold.value).toBe("20");
     fireEvent.change(threshold, { target: { value: "35" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save preferences" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(savePreferences).toHaveBeenCalledWith({ dayRolloverMinutes: 0, contributionThreshold: 35 }));
+    await waitFor(() => expect(saveDaySettings).toHaveBeenCalledWith(expect.objectContaining({ dayRolloverMinutes: 0, contributionThreshold: 35 })));
   });
 });
 
@@ -1552,5 +1555,138 @@ describe("entry gestures and bulk actions", () => {
 
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Delete entry" })).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(deleteEntries).toHaveBeenCalledWith(["a"]));
+  });
+});
+
+/**
+ * Where each thing the app can do is reached from.
+ *
+ * Settings had become a flat list holding three unrelated kinds of thing at once: the owner's
+ * records, two transient page modes, and the app itself. These cover the split — a command is not
+ * a setting, and the native host reaches everything through the menu bar instead.
+ */
+describe("where the app's surfaces live", () => {
+  const NO_TARGETS: Targets = { calories: null, protein: null, fat: null, carbs: null };
+
+  const emptyDay = () => seed({ day: { date: localDateString(), entries: [], totals: {} }, targets: NO_TARGETS, foods: [] });
+  const day = (entries: LogEntry[]) => seed({ day: { date: localDateString(), entries, totals: {} }, targets: NO_TARGETS, foods: [] });
+
+  async function openSettings() {
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    return screen.findByRole("dialog", { name: "Settings" });
+  }
+
+  /** Stands in for the macOS host, which is detected only by the bridge it installs. */
+  function stubNativeHost() {
+    const postMessage = vi.fn().mockResolvedValue({ data: null });
+    vi.stubGlobal("webkit", { messageHandlers: { calorieLogger: { postMessage } } });
+    return postMessage;
+  }
+
+  it("groups settings by what each one acts on", async () => {
+    await emptyDay();
+    render(<App />);
+    const dialog = await openSettings();
+
+    expect(within(dialog).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent))
+      .toEqual(["This day", "Goals", "Data", "Account", "This app"]);
+  });
+
+  it("keeps the two page modes out of the record settings", async () => {
+    await emptyDay();
+    render(<App />);
+    const dialog = await openSettings();
+
+    // They are commands, so they sit in the day's own group and are unavailable on an empty day.
+    const group = within(dialog).getByRole("heading", { name: "This day" }).parentElement!;
+    expect(within(group).getByRole<HTMLButtonElement>("button", { name: /Select entries/ }).disabled).toBe(true);
+    expect(within(group).getByRole<HTMLButtonElement>("button", { name: /Reorder entries/ }).disabled).toBe(true);
+  });
+
+  it("offers the two modes on the page itself, next to the log", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
+    await screen.findByText("Tap entries to select");
+
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reorder" }));
+    await screen.findByText("Drag entries into place");
+  });
+
+  it("hides the gear on the native host, which keeps its commands in the menu bar", async () => {
+    stubNativeHost();
+    await emptyDay();
+    render(<App />);
+
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+    expect(screen.queryByRole("button", { name: "Open settings" })).toBeNull();
+  });
+
+  it("lets the menu bar reach every panel and mode the gear reaches elsewhere", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    const commands = window.calorieLogger!;
+    for (const [open, title] of [
+      [commands.openTargets, "Targets & day"],
+      [commands.openSync, "Sync"],
+      [commands.openConnection, "Connection"],
+      [commands.openExport, "Export data"],
+      [commands.openReset, "Reset app data"],
+      [commands.openAbout, "About Calorie Logger"]
+    ] as const) {
+      act(() => open());
+      await screen.findByRole("dialog", { name: title });
+      fireEvent.click(within(screen.getByRole("dialog", { name: title })).getByRole("button", { name: "Close" }));
+    }
+
+    act(() => commands.startSelecting());
+    await screen.findByText("Tap entries to select");
+    act(() => commands.startReordering());
+    await screen.findByText("Drag entries into place");
+  });
+
+  it("steps the day from the menu bar without losing today", async () => {
+    const today = localDateString();
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    act(() => window.calorieLogger!.previousDay());
+    await screen.findByRole("button", { name: "Go to today" });
+
+    act(() => window.calorieLogger!.nextDay());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Go to today" })).toBeNull());
+    expect(today).toBe(localDateString());
+  });
+
+  it("tells the host when a text field takes focus, so its Edit menu means something", async () => {
+    const postMessage = stubNativeHost();
+    await emptyDay();
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add food to Breakfast" }));
+    const search = await screen.findByPlaceholderText(/Search/i);
+    fireEvent.focusIn(search);
+    await waitFor(() => expect(postMessage).toHaveBeenCalledWith({ method: "setTextEditing", payload: { editing: true } }));
+
+    fireEvent.focusOut(search);
+    await waitFor(() => expect(postMessage).toHaveBeenCalledWith({ method: "setTextEditing", payload: { editing: false } }));
+  });
+
+  it("says what it is in About and leaves the update to Settings, so one button exists", async () => {
+    await emptyDay();
+    render(<App />);
+    const settings = await openSettings();
+    fireEvent.click(within(settings).getByRole("button", { name: /About Calorie Logger/ }));
+
+    const about = await screen.findByRole("dialog", { name: "About Calorie Logger" });
+    expect(within(about).queryByRole("button", { name: /Update/ })).toBeNull();
+    expect(within(about).getByText(/Build/)).not.toBeNull();
   });
 });

@@ -4,7 +4,7 @@ import { cameraAvailable } from "./barcodeDetection";
 import { currentLogDate, displayDate, moveDate } from "./date";
 import pictureCreditsData from "./data/picture-credits.yaml";
 import { defaultCatalog } from "./defaultCatalog";
-import { localStore, type Preferences } from "./localStore";
+import { localStore, type DaySettings } from "./localStore";
 import { FoodVisualPicker } from "./FoodVisualPicker";
 import { MonthCalendar } from "./MonthCalendar";
 import { hasFinePointer, useRowGestures } from "./rowGestures";
@@ -17,6 +17,7 @@ import { alreadyInstalledOnThisDevice, canPromptInstall, detectedInstallPlatform
 import { appBuild, appVersion } from "./version";
 import { SyncChip, SyncPanel } from "./SyncStatus";
 import { syncEngine } from "./sync";
+import { observeViewport } from "./viewport";
 import type { StoredSession } from "./session";
 import type { ContributionLevel, EntryPlacement, ExternalFoodResult, ExternalFoodSearchResponse, ExternalFoodSource, Food, FoodContribution, FoodEstimate, FoodInput, FoodUnit, LogEntry, Meal, Nutrition, Targets } from "./types";
 import { emptyNutrition, foodContributions, scaledNutrition } from "./types";
@@ -336,13 +337,22 @@ function MetricCard({ label, value, target, kind, onOpenTargets }: { label: stri
   );
 }
 
-function TargetsForm({ initial, onSave, onClose }: { initial: Targets; onSave(targets: Targets): Promise<void>; onClose(): void }) {
+/**
+ * The goals, and the day they are measured over.
+ *
+ * These were two dialogs and are one record: the targets, the hour a day turns over, and the share
+ * of a target worth flagging are all stored together, and editing one without seeing the others
+ * meant guessing at what the flagging was a share of.
+ */
+function TargetsAndDayForm({ initial, onSave, onClose }: { initial: DaySettings; onSave(settings: DaySettings): Promise<void>; onClose(): void }) {
   const [values, setValues] = useState<Record<keyof Targets, string>>({
-    calories: initial.calories?.toString() ?? "",
-    protein: initial.protein?.toString() ?? "",
-    fat: initial.fat?.toString() ?? "",
-    carbs: initial.carbs?.toString() ?? ""
+    calories: initial.targets.calories?.toString() ?? "",
+    protein: initial.targets.protein?.toString() ?? "",
+    fat: initial.targets.fat?.toString() ?? "",
+    carbs: initial.targets.carbs?.toString() ?? ""
   });
+  const [rolloverTime, setRolloverTime] = useState(minutesToTime(initial.dayRolloverMinutes));
+  const [threshold, setThreshold] = useState(initial.contributionThreshold ? String(initial.contributionThreshold) : "");
   const [saving, setSaving] = useState(false);
   const updateValue = (key: keyof Targets, value: string) => {
     if (key === "calories") {
@@ -363,20 +373,32 @@ function TargetsForm({ initial, onSave, onClose }: { initial: Targets; onSave(ta
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setSaving(true);
-    const parsed = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value === "" ? null : Number(value)])) as unknown as Targets;
-    await onSave(parsed).finally(() => setSaving(false));
+    const targets = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value === "" ? null : Number(value)])) as unknown as Targets;
+    await onSave({
+      targets,
+      dayRolloverMinutes: timeToMinutes(rolloverTime),
+      contributionThreshold: threshold === "" ? 0 : Number(threshold)
+    }).finally(() => setSaving(false));
   };
   return (
-    <Modal title="Nutrition targets" onClose={onClose}>
+    <Modal title="Targets & day" onClose={onClose}>
       <form className="stack-form" onSubmit={submit} autoComplete="off">
         <p className="form-note">Enter protein, fat, and carbohydrates to calculate the matching energy target automatically.</p>
         {(["calories", "protein", "fat", "carbs"] as const).map((key) => (
           <label key={key}><span>{key[0].toUpperCase() + key.slice(1)} <small>{key === "calories" ? "kcal" : "g"}</small></span>
-            <input aria-describedby={key === "calories" ? "calorie-target-note" : undefined} className="android-input-workaround" type="search" role="spinbutton" inputMode="decimal" autoComplete="off" enterKeyHint={key === "carbs" ? "done" : "next"} aria-valuemin={0} aria-valuenow={decimalAriaValue(values[key])} value={values[key]} onChange={(e) => { const value = decimalText(e.target.value); if (value !== null) updateValue(key, value); }} />
+            <input aria-describedby={key === "calories" ? "calorie-target-note" : undefined} className="android-input-workaround" type="search" role="spinbutton" inputMode="decimal" autoComplete="off" enterKeyHint="next" aria-valuemin={0} aria-valuenow={decimalAriaValue(values[key])} value={values[key]} onChange={(e) => { const value = decimalText(e.target.value); if (value !== null) updateValue(key, value); }} />
           </label>
         ))}
         <p id="calorie-target-note" className="calculation-note">Energy uses 4 kcal per gram of protein or carbohydrate and 9 kcal per gram of fat. You can still edit it directly.</p>
-        <footer className="form-actions"><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving…" : "Save targets"}</button></footer>
+        <label><span>Day resets at</span>
+          <input type="time" value={rolloverTime} onChange={(e) => setRolloverTime(e.target.value)} />
+        </label>
+        <p className="form-note">Entries logged before this time still count towards the previous day. Set it later than midnight if you log meals overnight.</p>
+        <label><span>Flag a food above <small>% of a daily target</small></span>
+          <input className="android-input-workaround" type="search" role="spinbutton" inputMode="numeric" autoComplete="off" enterKeyHint="done" aria-valuemin={0} aria-valuemax={100} aria-valuenow={threshold === "" ? undefined : Number(threshold)} value={threshold} onChange={(e) => { const value = e.target.value.replace(/[^0-9]/g, "").slice(0, 3); if (value === "" || Number(value) <= 100) setThreshold(value); }} />
+        </label>
+        <p className="form-note">Foods taking at least this much of your fat or carbohydrate target for the day are tinted in the log, more strongly the larger the share. Every helping of the same food that day counts towards it. Leave it empty to turn the tinting off.</p>
+        <footer className="form-actions"><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving…" : "Save"}</button></footer>
       </form>
     </Modal>
   );
@@ -391,35 +413,6 @@ function minutesToTime(minutes: number): string {
 function timeToMinutes(value: string): number {
   const [hours, minutes] = value.split(":").map(Number);
   return hours * 60 + minutes;
-}
-
-function PreferencesForm({ initial, onSave, onClose }: { initial: Preferences; onSave(preferences: Preferences): Promise<void>; onClose(): void }) {
-  const [rolloverTime, setRolloverTime] = useState(minutesToTime(initial.dayRolloverMinutes));
-  const [threshold, setThreshold] = useState(initial.contributionThreshold ? String(initial.contributionThreshold) : "");
-  const [saving, setSaving] = useState(false);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setSaving(true);
-    await onSave({
-      dayRolloverMinutes: timeToMinutes(rolloverTime),
-      contributionThreshold: threshold === "" ? 0 : Number(threshold)
-    }).finally(() => setSaving(false));
-  };
-  return (
-    <Modal title="Preferences" onClose={onClose}>
-      <form className="stack-form" onSubmit={submit} autoComplete="off">
-        <label><span>Day resets at</span>
-          <input type="time" value={rolloverTime} onChange={(e) => setRolloverTime(e.target.value)} />
-        </label>
-        <p className="form-note">Entries logged before this time still count towards the previous day. Set it later than midnight if you log meals overnight.</p>
-        <label><span>Flag a food above <small>% of a daily target</small></span>
-          <input className="android-input-workaround" type="search" role="spinbutton" inputMode="numeric" autoComplete="off" enterKeyHint="done" aria-valuemin={0} aria-valuemax={100} aria-valuenow={threshold === "" ? undefined : Number(threshold)} value={threshold} onChange={(e) => { const value = e.target.value.replace(/[^0-9]/g, "").slice(0, 3); if (value === "" || Number(value) <= 100) setThreshold(value); }} />
-        </label>
-        <p className="form-note">Foods taking at least this much of your fat or carbohydrate target for the day are tinted in the log, more strongly the larger the share. Every helping of the same food that day counts towards it. Leave it empty to turn the tinting off.</p>
-        <footer className="form-actions"><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving…" : "Save preferences"}</button></footer>
-      </form>
-    </Modal>
-  );
 }
 
 type NutritionFieldDraft = { text: string; sourceValue: number | null; edited: boolean };
@@ -678,18 +671,20 @@ function ResetForm({ foodCount, resetting, onCancel, onConfirm }: {
  *
  * The version matters here in a way it does not in most applications: the app and the server move
  * together, and "which build am I on" is the first question when two devices disagree.
+ *
+ * About says what Calorie Logger is; it does nothing to it. The update is taken in Settings, which
+ * is the one place that acts on this installation, so the same button never appears twice.
  */
-function AboutPanel({ update, macApp, onUpdate }: {
+function AboutPanel({ update, macApp }: {
   update: UpdateStage | undefined;
   macApp: MacReleaseInfo | null;
-  onUpdate(): void;
 }) {
   const download = macApp ? repository.downloadURL(macApp.url) : undefined;
   return <div className="stack-form">
     <p className="about-version">Calorie Logger <strong>{appVersion}</strong></p>
     <p className="form-note">Build {appBuild}</p>
-    {update === "downloading" && <p className="form-note">Downloading an update in the background. It will be ready in a moment.</p>}
-    {update === "ready" && <button className="primary-button" onClick={onUpdate}>Update and reload</button>}
+    {update === "downloading" && <p className="form-note">Downloading an update in the background. It will be offered in Settings when it is ready.</p>}
+    {update === "ready" && <p className="form-note">An update is ready. Take it from Settings.</p>}
     {!update && <p className="form-note">This is the newest version this server has.</p>}
     {download && !isNativeHost() && <p className="form-note">
       A Mac application is available for this server: <a href={download}>download version {macApp?.version}</a>.
@@ -1196,7 +1191,7 @@ export default function App() {
   const menuDate = currentLogDate(dayRolloverMinutes);
   const menuDay = useMemo(() => repository.day(menuDate), [snapshot, menuDate]);
   const loading = !snapshot.ready;
-  const [modal, setModal] = useState<"add" | "targets" | "preferences" | "export" | "connection" | "settings" | "sync" | "reset" | "about" | null>(null);
+  const [modal, setModal] = useState<"add" | "targets" | "export" | "connection" | "settings" | "sync" | "reset" | "about" | null>(null);
   const [update, setUpdate] = useState<UpdateStage | undefined>(() => updateStage());
   const [macApp, setMacApp] = useState<MacReleaseInfo | null>(null);
   const [macBannerDismissed, setMacBannerDismissed] = useState(() => localStorage.getItem("calorie-logger-mac-offer-dismissed") === "true");
@@ -1288,6 +1283,9 @@ export default function App() {
 
   useEffect(() => { setSelected(new Set()); setConfirmingDelete(false); setEntryMenu(undefined); }, [date]);
 
+  // Dialogs are laid out against the part of the window the keyboard leaves visible.
+  useEffect(() => observeViewport(), []);
+
   const publishNativeSummary = useCallback(async () => {
     const native = window.webkit?.messageHandlers?.calorieLogger;
     if (!native || !session?.token) return;
@@ -1300,16 +1298,42 @@ export default function App() {
     if (native) void native.postMessage({ method: "updateMenuState", payload: { state } });
   }, [session, syncStatus.state]);
 
+  // What the macOS menu bar drives. The menu bar is that host's only entry point, so it reaches
+  // every panel and mode the gear reaches elsewhere -- opening the same panels, not copies of them.
   useEffect(() => {
     window.calorieLogger = {
       openAddFood: () => { setEditingEntry(undefined); setAddMeal("breakfast"); setModal("add"); },
       openTargets: () => setModal("targets"),
       openExport: () => setModal("export"),
       openConnection: () => setModal("connection"),
+      openSync: () => setModal("sync"),
+      openReset: () => setModal("reset"),
+      openAbout: () => setModal("about"),
+      startSelecting: () => { setSelecting(true); setReordering(false); setSelected(new Set()); setModal(null); },
+      startReordering: () => { setReordering(true); setSelecting(false); setSelected(new Set()); setModal(null); },
+      previousDay: () => setDate((current) => moveDate(current, -1)),
+      nextDay: () => setDate((current) => moveDate(current, 1)),
       jumpToToday: () => setDate(menuDate)
     };
     return () => { delete window.calorieLogger; };
   }, [menuDate]);
+
+  // The Edit menu's commands act on whatever holds focus, so the host is told when a field has it.
+  useEffect(() => {
+    const native = window.webkit?.messageHandlers?.calorieLogger;
+    if (!native) return;
+    const editable = (target: EventTarget | null) => target instanceof HTMLElement
+      && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable);
+    const report = (editing: boolean) => void native.postMessage({ method: "setTextEditing", payload: { editing } });
+    const onFocusIn = (event: FocusEvent) => { if (editable(event.target)) report(true); };
+    const onFocusOut = (event: FocusEvent) => { if (editable(event.target)) report(false); };
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
 
   const dateDisplay = displayDate(date);
   const toggleSelected = (id: string) => {
@@ -1473,11 +1497,8 @@ export default function App() {
   const repeatMeal = async (meal: Meal) => {
     try { await repository.repeatPreviousMeal(date, meal); } catch (e) { reportError(e); }
   };
-  const saveTargets = async (next: Targets) => {
-    try { await repository.saveTargets(next); setModal(null); } catch (e) { reportError(e); }
-  };
-  const savePreferences = async (preferences: Preferences) => {
-    try { await repository.savePreferences(preferences); setModal(null); } catch (e) { reportError(e); }
+  const saveDaySettings = async (next: DaySettings) => {
+    try { await repository.saveDaySettings(next); setModal(null); } catch (e) { reportError(e); }
   };
   const signOut = async () => {
     setConnectionDefaults({ baseUrl: session?.baseUrl, email: session?.email });
@@ -1516,11 +1537,13 @@ export default function App() {
         </div>
         <div className="header-actions">
           <SyncChip status={syncStatus} onOpen={() => setModal("sync")} />
-          <button
+          {/* The native host keeps its commands in the menu bar, where a Mac application keeps
+              them, so a second door into the same rooms would only be a way to disagree. */}
+          {!isNativeHost() && <button
             className={`settings-button ${update === "ready" ? "has-update" : ""}`}
             onClick={() => setModal("settings")}
             aria-label={update === "ready" ? "Open settings; an update is ready" : "Open settings"}
-          ><SettingsIcon /></button>
+          ><SettingsIcon /></button>}
         </div>
       </section>
 
@@ -1545,6 +1568,12 @@ export default function App() {
             {selected.size > 0 && <><button onClick={() => openTransfer([...selected], "copy")}>Copy…</button><button className="danger-text" onClick={() => setConfirmingDelete(true)}>Delete</button></>}
             <button onClick={endSelecting}>Done</button>
           </>}
+        </div>}
+        {/* Where there is room for them, the two modes are on the page rather than behind a menu.
+            Narrower screens reach them from Settings, which the matching media query hides here. */}
+        {!loading && <div className="log-tools">
+          <button disabled={!day.entries.length || selecting} onClick={() => { setSelecting(true); setReordering(false); setSelected(new Set()); }}>Select</button>
+          <button disabled={!day.entries.length || reordering} onClick={() => { setReordering(true); setSelecting(false); setSelected(new Set()); }}>Reorder</button>
         </div>}
         {loading ? <div className="empty-state"><p>Opening today’s page…</p></div> : <div className={`meal-log ${dragging ? "is-dragging" : ""}`} role="table" aria-label="Food log by meal">
           <div className="food-table-header" role="row">
@@ -1642,8 +1671,7 @@ export default function App() {
       onRequestDelete={(target) => { setModal(null); setEditingEntry(undefined); setConfirmingEntry(target); }}
       reportError={reportError}
     />}
-    {modal === "targets" && <TargetsForm initial={targets} onSave={saveTargets} onClose={() => setModal(null)} />}
-    {modal === "preferences" && <PreferencesForm initial={{ dayRolloverMinutes, contributionThreshold }} onSave={savePreferences} onClose={() => setModal(null)} />}
+    {modal === "targets" && <TargetsAndDayForm initial={{ targets, dayRolloverMinutes, contributionThreshold }} onSave={saveDaySettings} onClose={() => setModal(null)} />}
     {transfer && <TransferEntriesForm request={transfer} today={menuDate} onCancel={() => setTransfer(undefined)} onConfirm={(request) => void runTransfer(request)} />}
     {entryMenu && menuEntry && <EntryMenu
       label={selecting && selected.has(menuEntry.id) ? `${selected.size} selected` : menuEntry.name}
@@ -1670,15 +1698,28 @@ export default function App() {
       {update === "downloading" && <button className="settings-update" disabled>
         <span>Downloading an update…</span><small>You can carry on; it will be offered when it is ready.</small>
       </button>}
-      <button onClick={() => setModal("targets")}><span>Nutrition targets</span><small>Set energy and macro goals</small></button>
-      <button onClick={() => setModal("preferences")}><span>Preferences</span><small>General app behaviour</small></button>
-      <button disabled={!day.entries.length} onClick={() => { setSelecting(true); setReordering(false); setSelected(new Set()); setModal(null); }}><span>Select entries</span><small>Copy, move or delete several foods at once</small></button>
-      <button disabled={!day.entries.length} onClick={() => { setReordering(true); setSelecting(false); setSelected(new Set()); setModal(null); }}><span>Reorder entries</span><small>Drag foods within or between meals. Pressing and holding an entry does the same.</small></button>
-      <button onClick={() => setModal("export")}><span>Export data</span><small>Save a JSON backup</small></button>
-      <button onClick={() => setModal("sync")}><span>Sync</span><small>{syncStatus.pendingCount ? `${syncStatus.pendingCount} change${syncStatus.pendingCount === 1 ? "" : "s"} waiting to upload` : "Offline copy and upload status"}</small></button>
-      <button onClick={() => setModal("connection")}><span>Connection</span><small>Account and server settings</small></button>
-      <button onClick={() => setModal("about")}><span>About</span><small>Version {appVersion}{macApp && !isNativeHost() ? " · Mac app available" : ""}</small></button>
-      <button className="settings-danger" onClick={() => setModal("reset")}><span>Reset app data</span><small>Delete everything and restore the default foods</small></button>
+      <div className="settings-group settings-day-group">
+        <h3>This day</h3>
+        <button disabled={!day.entries.length} onClick={() => { setSelecting(true); setReordering(false); setSelected(new Set()); setModal(null); }}><span>Select entries</span><small>Copy, move or delete several foods at once</small></button>
+        <button disabled={!day.entries.length} onClick={() => { setReordering(true); setSelecting(false); setSelected(new Set()); setModal(null); }}><span>Reorder entries</span><small>Drag foods within or between meals. Pressing and holding an entry does the same.</small></button>
+      </div>
+      <div className="settings-group">
+        <h3>Goals</h3>
+        <button onClick={() => setModal("targets")}><span>Targets &amp; day</span><small>Energy and macro goals, when a day starts, and what gets flagged</small></button>
+      </div>
+      <div className="settings-group">
+        <h3>Data</h3>
+        <button onClick={() => setModal("export")}><span>Export data</span><small>Save a JSON backup</small></button>
+        <button className="settings-danger" onClick={() => setModal("reset")}><span>Reset app data</span><small>Delete everything and restore the default foods</small></button>
+      </div>
+      <div className="settings-group">
+        <h3>Account</h3>
+        <button onClick={() => setModal("connection")}><span>Connection</span><small>Account and server settings</small></button>
+      </div>
+      <div className="settings-group">
+        <h3>This app</h3>
+        <button onClick={() => setModal("about")}><span>About Calorie Logger</span><small>Version {appVersion}{macApp && !isNativeHost() ? " · Mac app available" : ""}</small></button>
+      </div>
     </div></Modal>}
     {modal === "reset" && <Modal title="Reset app data" onClose={() => setModal(null)}><ResetForm
       foodCount={foods.length}
@@ -1697,7 +1738,7 @@ export default function App() {
       }}
     /></Modal>}
     {modal === "about" && <Modal title="About Calorie Logger" onClose={() => setModal(null)}>
-      <AboutPanel update={update} macApp={macApp} onUpdate={() => void installUpdate()} />
+      <AboutPanel update={update} macApp={macApp} />
     </Modal>}
     {modal === "sync" && <Modal title="Sync" onClose={() => setModal(null)}><SyncPanel status={syncStatus} persistent={snapshot.persistent} onSyncNow={() => void syncEngine.syncNow(true)} onDismissConflicts={() => syncEngine.acknowledge()} /></Modal>}
     {error && <div className="toast" role="alert"><span>{error}</span><button onClick={() => setError(undefined)}>×</button></div>}

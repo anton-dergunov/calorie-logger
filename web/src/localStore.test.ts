@@ -3,7 +3,7 @@ import { localDateString, moveDate } from "./date";
 import { defaultCatalog } from "./defaultCatalog";
 import { localStore } from "./localStore";
 import type { Food, FoodInput, StoredEntry, SyncFields } from "./types";
-import { DEFAULT_CONTRIBUTION_THRESHOLD } from "./types";
+import { DEFAULT_CONTRIBUTION_THRESHOLD, emptyTargets } from "./types";
 
 const TODAY = localDateString();
 const YESTERDAY = moveDate(TODAY, -1);
@@ -241,7 +241,7 @@ describe("targets and export", () => {
     const food = await localStore.saveFood(foodInput());
     await localStore.addEntry(TODAY, food.id, 100, "breakfast");
     await localStore.addEntry(moveDate(TODAY, -5), food.id, 50, "lunch");
-    await localStore.saveTargets({ calories: 1820, protein: 120, fat: 60, carbs: 200 });
+    await localStore.saveDaySettings({ targets: { calories: 1820, protein: 120, fat: 60, carbs: 200 }, dayRolloverMinutes: 0, contributionThreshold: 0 });
 
     expect(localStore.getSnapshot().targets).toEqual({ calories: 1820, protein: 120, fat: 60, carbs: 200 });
     const everything = localStore.exportDocument({ scope: "all" });
@@ -253,21 +253,22 @@ describe("targets and export", () => {
     expect(ranged.foods.map((item) => item.id)).toEqual([food.id]);
   });
 
-  it("keeps the preferences and the targets on one record, so neither write clears the other", async () => {
-    await localStore.saveTargets({ calories: 1820, protein: 120, fat: 60, carbs: 200 });
-    await localStore.savePreferences({ dayRolloverMinutes: 240, contributionThreshold: 30 });
+  it("writes the goals and the day they are measured over as one change", async () => {
+    await localStore.saveDaySettings({ targets: { calories: 1820, protein: 120, fat: 60, carbs: 200 }, dayRolloverMinutes: 240, contributionThreshold: 30 });
 
     expect(localStore.getSnapshot().dayRolloverMinutes).toBe(240);
     expect(localStore.getSnapshot().contributionThreshold).toBe(30);
     expect(localStore.getSnapshot().targets.calories).toBe(1820);
 
-    await localStore.saveTargets({ calories: 2000, protein: 130, fat: 65, carbs: 210 });
+    const first = localStore.pendingChanges().settings?.revision;
+    await localStore.saveDaySettings({ targets: { calories: 2000, protein: 130, fat: 65, carbs: 210 }, dayRolloverMinutes: 240, contributionThreshold: 30 });
+    expect(localStore.getSnapshot().targets.calories).toBe(2000);
     expect(localStore.getSnapshot().contributionThreshold).toBe(30);
-    expect(localStore.getSnapshot().dayRolloverMinutes).toBe(240);
+    expect(localStore.pendingChanges().settings?.revision).toBe(first);
   });
 
   it("carries a changed preference to the owner's other devices", async () => {
-    await localStore.savePreferences({ dayRolloverMinutes: 0, contributionThreshold: 0 });
+    await localStore.saveDaySettings({ targets: emptyTargets(), dayRolloverMinutes: 0, contributionThreshold: 0 });
     expect(localStore.getSnapshot().contributionThreshold).toBe(0);
     expect(localStore.pendingChanges().settings?.contributionThreshold).toBe(0);
   });
@@ -277,7 +278,7 @@ describe("replication", () => {
   it("queues every local change until the server accepts it", async () => {
     const food = await localStore.saveFood(foodInput());
     await localStore.addEntry(TODAY, food.id, 100, "breakfast");
-    await localStore.saveTargets({ calories: 2000, protein: null, fat: null, carbs: null });
+    await localStore.saveDaySettings({ targets: { calories: 2000, protein: null, fat: null, carbs: null }, dayRolloverMinutes: 0, contributionThreshold: 0 });
 
     const pending = localStore.pendingChanges();
     expect(pending.foods).toHaveLength(1);
@@ -405,7 +406,7 @@ describe("resetting and seeding", () => {
   it("empties the account, clears targets, and restores the catalogue", async () => {
     const food = await localStore.saveFood(foodInput({ name: "Leftover pizza" }));
     await localStore.addEntry(TODAY, food.id, 200, "dinner");
-    await localStore.saveTargets({ calories: 2200, protein: 150, fat: null, carbs: null });
+    await localStore.saveDaySettings({ targets: { calories: 2200, protein: 150, fat: null, carbs: null }, dayRolloverMinutes: 0, contributionThreshold: 0 });
 
     await localStore.resetToDefaults();
 

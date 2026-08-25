@@ -8,13 +8,23 @@ Three layers, deliberately separated:
 |---|---|
 | `web/` | The Vite + React + TypeScript app: the whole interface, the complete local replica of your data, every operation over it, and the sync engine. |
 | `pocketbase/` | The pinned server: one canonical schema bootstrap plus later migrations, and hooks implementing authentication, the `/sync` merge, external food search, and the portion estimate. It stores and merges records; it does not compute days, ordering, or exports. |
-| `macos/` | A thin Swift/AppKit host: the window, the menu bar item and popover, session storage, the export save panel, the updater, and a small typed bridge. |
+| `macos/` | A thin Swift/AppKit host: the window, the menu bar item and popover, the main menu, its own settings window, session storage, the export save panel, the updater, and a small typed bridge. |
 
 The macOS app bundles `web/dist` and serves it to `WKWebView` over the `calorie-logger://app`
 origin. It must not go back to `loadHTMLString` with a `file://` base URL: a `file://` page has no
 usable IndexedDB, which is where the replica lives, and WebKit may parse `file://` script tags
 without executing them, giving a blank window. A hosted `WKWebView` test asserts both that the
 interface renders and that `indexedDB.open` succeeds.
+
+Where a surface belongs follows from what it acts on. The owner's **records** — targets, the day
+boundary, flagging, export, reset, the account — sync between devices, so only `web/` can hold
+them, and each has exactly one panel. **View commands** — select, reorder, today, previous and next
+day, add food — are page state, so they live on the page and in the menu bar rather than in a
+settings list. **Installation** — version, updates, open at login — is the one kind that is
+platform-specific, which is why the macOS host has a settings window of its own and the interface
+does not carry one there. On that host the menu bar is the only entry point: it calls the
+interface's commands through `window.calorieLogger`, so a new surface means one command, its type,
+and a menu item, never a second implementation.
 
 See [sync.md](sync.md) for the replication design, and `AGENTS.md` for the full source map and the
 rules that changes have to respect.

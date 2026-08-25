@@ -28,8 +28,10 @@ export interface StoreSnapshot {
   persistent: boolean;
 }
 
-/** The settings the owner edits together in Preferences, written as one record. */
+/** When a day starts, and how large a share of a target makes a food worth flagging. */
 export type Preferences = Pick<StoredTargets, "dayRolloverMinutes" | "contributionThreshold">;
+/** Everything one panel edits: the goals, and the day boundary and flagging they are read against. */
+export type DaySettings = Preferences & { targets: Targets };
 
 const EMPTY_SNAPSHOT: StoreSnapshot = {
   ready: false,
@@ -440,27 +442,18 @@ class LocalStore {
     await this.commit({ entries });
   }
 
-  async saveTargets(targets: Targets): Promise<Targets> {
+  /// The goals and the day they are measured over are one record, so they are written as one
+  /// change. Saving them separately produced two revisions of the same row for one edit.
+  async saveDaySettings(settings: DaySettings): Promise<DaySettings> {
     const record: StoredTargets = {
       id: this.settings?.id ?? SETTINGS_ID,
-      targets,
-      dayRolloverMinutes: this.settings?.dayRolloverMinutes ?? 0,
-      contributionThreshold: this.settings?.contributionThreshold ?? DEFAULT_CONTRIBUTION_THRESHOLD,
+      targets: settings.targets,
+      dayRolloverMinutes: settings.dayRolloverMinutes,
+      contributionThreshold: settings.contributionThreshold,
       ...this.stamp(this.settings?.createdAt)
     };
     await this.commit({ settings: record });
-    return targets;
-  }
-
-  async savePreferences(preferences: Preferences): Promise<Preferences> {
-    const record: StoredTargets = {
-      id: this.settings?.id ?? SETTINGS_ID,
-      targets: this.settings?.targets ?? emptyTargets(),
-      ...preferences,
-      ...this.stamp(this.settings?.createdAt)
-    };
-    await this.commit({ settings: record });
-    return preferences;
+    return settings;
   }
 
   exportDocument(request: ExportRequest): ExportDocument {

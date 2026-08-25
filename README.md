@@ -79,7 +79,9 @@ it is that way.
 
 The Mac app puts three small meters in the menu bar — protein, fat, carbohydrate against your
 targets — so you can see what you are short of without opening anything. It updates itself from
-your server in one click.
+your server in one click. Started with your session it stays quietly in the menu bar; open it
+yourself and it shows today. Everything it can do is in its menu bar, and Command-comma opens the
+settings that belong to your Mac: whether it starts at login, and how it takes updates.
 
 ## Yours, and portable
 

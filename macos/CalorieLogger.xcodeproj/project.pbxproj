@@ -8,13 +8,15 @@
 
 /* Begin PBXBuildFile section */
 		4ED78D97264C109AA7A4A9DE /* ServiceManagement.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 468A2A9770E0CD261BD60AC8 /* ServiceManagement.framework */; };
-		5721033B32AB044F7B9206AB /* PreferencesWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBD283B38A24052365BF9E76 /* PreferencesWindow.swift */; };
+		58E9D0B25D2B745A7B6B8CC7 /* LaunchContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C0EA2A53396A4EDF8A40F7D /* LaunchContext.swift */; };
 		760DE0032DB64C3D87C6C9F3 /* CalorieLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0F08540E2DF2B8383D095B /* CalorieLoggerApp.swift */; };
 		79601945B4D744E39CD52944 /* WebInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7BBFFD0BBA48D7B189461CC /* WebInterface.swift */; };
 		947CE6543B505B2D8B05DCEF /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 235FB1BF3EE2A6B9C5D1DA57 /* Security.framework */; };
 		A21AE054C4E325FCBC82FCAE /* DatabaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298781464CB02A6E231CC46D /* DatabaseTests.swift */; };
 		A2B516171547516669F5DF96 /* UpdateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C27BADCC50A38D466F1B164 /* UpdateService.swift */; };
 		A2F06B1503DE30F697579085 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1981B209D6A5791652F209D4 /* Assets.xcassets */; };
+		B9928F35E49D0D61BFE7C33C /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6A394AB424FD9F398ACAA6 /* SettingsWindow.swift */; };
+		BAA62D5B0AC0FA0395BE890D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F399216DA1D4546E85B0CA4 /* SettingsView.swift */; };
 		C07BE0DD94C52F6851285B52 /* Bridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167CC6035124B49181317016 /* Bridge.swift */; };
 		C8B340945ECB77D87A8D908D /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC99D2636B9A3D58842DE849 /* Models.swift */; };
 		D5E1ACFA5DC140ACDB4F524F /* AppRelease.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C98EC042D5CC5437EA305D8 /* AppRelease.swift */; };
@@ -41,10 +43,12 @@
 		468A2A9770E0CD261BD60AC8 /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
 		4A0F08540E2DF2B8383D095B /* CalorieLoggerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalorieLoggerApp.swift; sourceTree = "<group>"; };
 		64072F09E375E18B46A6AD0F /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
+		8C0EA2A53396A4EDF8A40F7D /* LaunchContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchContext.swift; sourceTree = "<group>"; };
+		8F399216DA1D4546E85B0CA4 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		C24AEC919F997AC57363DA9A /* CalorieLoggerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CalorieLoggerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C7BBFFD0BBA48D7B189461CC /* WebInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebInterface.swift; sourceTree = "<group>"; };
-		CBD283B38A24052365BF9E76 /* PreferencesWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesWindow.swift; sourceTree = "<group>"; };
 		CC99D2636B9A3D58842DE849 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		DA6A394AB424FD9F398ACAA6 /* SettingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindow.swift; sourceTree = "<group>"; };
 		DF87C6F2858A0CF426E3529E /* CalorieLogger.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CalorieLogger.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -87,9 +91,11 @@
 				2C98EC042D5CC5437EA305D8 /* AppRelease.swift */,
 				167CC6035124B49181317016 /* Bridge.swift */,
 				4A0F08540E2DF2B8383D095B /* CalorieLoggerApp.swift */,
+				8C0EA2A53396A4EDF8A40F7D /* LaunchContext.swift */,
 				64072F09E375E18B46A6AD0F /* MenuBarController.swift */,
 				CC99D2636B9A3D58842DE849 /* Models.swift */,
-				CBD283B38A24052365BF9E76 /* PreferencesWindow.swift */,
+				8F399216DA1D4546E85B0CA4 /* SettingsView.swift */,
+				DA6A394AB424FD9F398ACAA6 /* SettingsWindow.swift */,
 				3C27BADCC50A38D466F1B164 /* UpdateService.swift */,
 				C7BBFFD0BBA48D7B189461CC /* WebInterface.swift */,
 			);
@@ -265,9 +271,11 @@
 				D5E1ACFA5DC140ACDB4F524F /* AppRelease.swift in Sources */,
 				C07BE0DD94C52F6851285B52 /* Bridge.swift in Sources */,
 				760DE0032DB64C3D87C6C9F3 /* CalorieLoggerApp.swift in Sources */,
+				58E9D0B25D2B745A7B6B8CC7 /* LaunchContext.swift in Sources */,
 				F2F1B327BE2D9C9AA690DF93 /* MenuBarController.swift in Sources */,
 				C8B340945ECB77D87A8D908D /* Models.swift in Sources */,
-				5721033B32AB044F7B9206AB /* PreferencesWindow.swift in Sources */,
+				BAA62D5B0AC0FA0395BE890D /* SettingsView.swift in Sources */,
+				B9928F35E49D0D61BFE7C33C /* SettingsWindow.swift in Sources */,
 				A2B516171547516669F5DF96 /* UpdateService.swift in Sources */,
 				79601945B4D744E39CD52944 /* WebInterface.swift in Sources */,
 			);
