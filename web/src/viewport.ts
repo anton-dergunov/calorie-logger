@@ -9,11 +9,13 @@
  *
  * `offsetTop` matters as much as the height: a fixed element is positioned against the layout
  * viewport, so once iOS scrolls the page under the keyboard the two no longer share an origin.
+ *
+ * This is for dialogs that are centred in the window. A surface that already fills the screen and
+ * scrolls -- the phone's food browser -- keeps the layout viewport, because sizing it to the
+ * visible box strands its actions in the middle of the screen instead of at the bottom.
  */
 export const VIEWPORT_HEIGHT = "--app-viewport-height";
 export const VIEWPORT_TOP = "--app-viewport-top";
-/** How much of the window the keyboard is covering, for anything anchored to the bottom. */
-export const KEYBOARD_INSET = "--app-keyboard-inset";
 
 export function observeViewport(target: HTMLElement = document.documentElement): () => void {
   const viewport = window.visualViewport;
@@ -25,10 +27,8 @@ export function observeViewport(target: HTMLElement = document.documentElement):
     // everywhere a keyboard does not overlap the page.
     const height = viewport?.height ?? window.innerHeight;
     const top = viewport?.offsetTop ?? 0;
-    const covered = Math.max(0, window.innerHeight - (top + height));
     target.style.setProperty(VIEWPORT_HEIGHT, `${Math.round(height)}px`);
     target.style.setProperty(VIEWPORT_TOP, `${Math.round(top)}px`);
-    target.style.setProperty(KEYBOARD_INSET, `${Math.round(covered)}px`);
   };
 
   // A keyboard opening reports continuously as it animates; one write per frame is enough.

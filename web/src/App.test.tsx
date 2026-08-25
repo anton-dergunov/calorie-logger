@@ -1278,7 +1278,7 @@ describe("high-contribution foods", () => {
 
     await screen.findByRole("button", { name: "Add food to Breakfast" });
     fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
-    fireEvent.click(screen.getByRole("button", { name: /Targets & day/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Daily targets/ }));
     // The goals and the day they are read against are one panel now, so the threshold is the last
     // of five numbers rather than the only one.
     const numbers = screen.getAllByRole("spinbutton") as HTMLInputElement[];
@@ -1633,7 +1633,7 @@ describe("where the app's surfaces live", () => {
 
     const commands = window.calorieLogger!;
     for (const [open, title] of [
-      [commands.openTargets, "Targets & day"],
+      [commands.openTargets, "Daily targets"],
       [commands.openSync, "Sync"],
       [commands.openConnection, "Connection"],
       [commands.openExport, "Export data"],
@@ -1677,6 +1677,22 @@ describe("where the app's surfaces live", () => {
 
     fireEvent.focusOut(search);
     await waitFor(() => expect(postMessage).toHaveBeenCalledWith({ method: "setTextEditing", payload: { editing: false } }));
+  });
+
+  it("gives each dialog the width its content needs", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    // Paired number fields, so more than the narrow default but not the two-column surface.
+    act(() => window.calorieLogger!.openTargets());
+    const targets = await screen.findByRole("dialog", { name: "Daily targets" });
+    expect(targets.className).toContain("modal-roomy");
+    fireEvent.click(within(targets).getByRole("button", { name: "Close" }));
+
+    act(() => window.calorieLogger!.openAddFood());
+    const add = await screen.findByRole("dialog", { name: "Add food" });
+    expect(add.className).toContain("modal-wide");
   });
 
   it("says what it is in About and leaves the update to Settings, so one button exists", async () => {

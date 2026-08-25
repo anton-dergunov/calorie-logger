@@ -60,11 +60,11 @@ final class NativeModelTests: XCTestCase {
         XCTAssertNotNil(fileMenu.item(withTitle: "Reset App Data…"))
 
         let dayMenu = try XCTUnwrap(mainMenu.items.first(where: { $0.submenu?.title == "Day" })?.submenu)
-        for title in ["Today", "Previous Day", "Next Day", "Select Entries", "Reorder Entries", "Targets & Day…"] {
+        for title in ["Today", "Previous Day", "Next Day", "Select Entries", "Reorder Entries", "Daily Targets…"] {
             XCTAssertNotNil(dayMenu.item(withTitle: title), "the day menu is missing \(title)")
         }
         // Command-comma belongs to Settings, so the goals take a modifier of their own.
-        XCTAssertEqual(dayMenu.item(withTitle: "Targets & Day…")?.keyEquivalentModifierMask, [.command, .option])
+        XCTAssertEqual(dayMenu.item(withTitle: "Daily Targets…")?.keyEquivalentModifierMask, [.command, .option])
     }
 
     /// The editing commands act on whatever holds focus. Left to itself the web view answers for

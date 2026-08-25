@@ -256,7 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         add(to: menu, "Select Entries", #selector(selectEntriesMenu), "s", [.command, .shift])
         add(to: menu, "Reorder Entries", #selector(reorderEntriesMenu), "r", [.command, .shift])
         menu.addItem(.separator())
-        add(to: menu, "Targets & Day…", #selector(targetsMenu), "t", [.command, .option])
+        add(to: menu, "Daily Targets…", #selector(targetsMenu), "t", [.command, .option])
         item.submenu = menu
         return item
     }

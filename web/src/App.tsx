@@ -75,14 +75,15 @@ function totalNutrition(entries: LogEntry[]): Nutrition {
  * shows and follows the step, so a person always reads where they are without the dialog
  * renaming itself underneath a screen reader.
  */
-function Modal({ title, label, onClose, onBack, backLabel, children, wide = false, hideHeader = false }: {
+function Modal({ title, label, onClose, onBack, backLabel, children, size = "regular", hideHeader = false }: {
   title: string;
   label?: string;
   onClose(): void;
   onBack?(): void;
   backLabel?: string;
   children: ReactNode;
-  wide?: boolean;
+  /** How much room the content needs: a short form, a form with paired fields, or two columns. */
+  size?: "regular" | "roomy" | "wide";
   hideHeader?: boolean;
 }) {
   useEffect(() => {
@@ -91,8 +92,8 @@ function Modal({ title, label, onClose, onBack, backLabel, children, wide = fals
     return () => document.removeEventListener("keydown", close);
   }, [onClose]);
   return (
-    <div className={`modal-backdrop ${wide ? "modal-backdrop-wide" : ""}`} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className={`modal ${wide ? "modal-wide" : ""} ${hideHeader ? "modal-header-hidden" : ""}`} role="dialog" aria-modal="true" aria-label={label ?? title}>
+    <div className={`modal-backdrop ${size === "wide" ? "modal-backdrop-wide" : ""}`} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className={`modal modal-${size} ${hideHeader ? "modal-header-hidden" : ""}`} role="dialog" aria-modal="true" aria-label={label ?? title}>
         {!hideHeader && <header className="modal-header">
           {onBack && <button className="icon-button back-button" onClick={onBack} aria-label={backLabel ?? "Back"}><ChevronIcon direction="left" /></button>}
           <h2>{title}</h2>
@@ -381,14 +382,17 @@ function TargetsAndDayForm({ initial, onSave, onClose }: { initial: DaySettings;
     }).finally(() => setSaving(false));
   };
   return (
-    <Modal title="Targets & day" onClose={onClose}>
+    <Modal title="Daily targets" onClose={onClose} size="roomy">
       <form className="stack-form" onSubmit={submit} autoComplete="off">
         <p className="form-note">Enter protein, fat, and carbohydrates to calculate the matching energy target automatically.</p>
-        {(["calories", "protein", "fat", "carbs"] as const).map((key) => (
-          <label key={key}><span>{key[0].toUpperCase() + key.slice(1)} <small>{key === "calories" ? "kcal" : "g"}</small></span>
-            <input aria-describedby={key === "calories" ? "calorie-target-note" : undefined} className="android-input-workaround" type="search" role="spinbutton" inputMode="decimal" autoComplete="off" enterKeyHint="next" aria-valuemin={0} aria-valuenow={decimalAriaValue(values[key])} value={values[key]} onChange={(e) => { const value = decimalText(e.target.value); if (value !== null) updateValue(key, value); }} />
-          </label>
-        ))}
+        {/* Four short numbers pair up wherever the dialog is wide enough for two of them. */}
+        <div className="paired-fields">
+          {(["calories", "protein", "fat", "carbs"] as const).map((key) => (
+            <label key={key}><span>{key[0].toUpperCase() + key.slice(1)} <small>{key === "calories" ? "kcal" : "g"}</small></span>
+              <input aria-describedby={key === "calories" ? "calorie-target-note" : undefined} className="android-input-workaround" type="search" role="spinbutton" inputMode="decimal" autoComplete="off" enterKeyHint="next" aria-valuemin={0} aria-valuenow={decimalAriaValue(values[key])} value={values[key]} onChange={(e) => { const value = decimalText(e.target.value); if (value !== null) updateValue(key, value); }} />
+            </label>
+          ))}
+        </div>
         <p id="calorie-target-note" className="calculation-note">Energy uses 4 kcal per gram of protein or carbohydrate and 9 kcal per gram of fat. You can still edit it directly.</p>
         <label><span>Day resets at</span>
           <input type="time" value={rolloverTime} onChange={(e) => setRolloverTime(e.target.value)} />
@@ -580,7 +584,7 @@ function FoodForm({ food, external, estimate, oneOffByDefault = false, notice, p
       <div className="form-body">
         {notice}
         <div className="name-and-picture">
-          <label className="full-field"><span>Food name{oneOff && <b className="one-off-tag">One-off</b>}</span><input aria-label="Food name" required className="android-input-workaround" type="search" role="textbox" inputMode="text" autoComplete="off" autoCapitalize="words" autoCorrect="on" spellCheck enterKeyHint="next" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} placeholder="e.g. Greek yoghurt" /></label>
+          <label className="full-field"><span>Food name{oneOff && <b className="one-off-tag">One-off</b>}</span><input aria-label="Food name" required id="food-title" name="food-title" className="android-input-workaround" type="search" role="textbox" inputMode="text" autoComplete="off" autoCapitalize="words" autoCorrect="on" spellCheck enterKeyHint="next" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} placeholder="e.g. Greek yoghurt" /></label>
           <div className="picture-field">
             <span>Picture</span>
             <button ref={pictureButtonRef} type="button" onClick={onPictureOpen} aria-label="Change food picture">
@@ -947,7 +951,7 @@ function AddFoodModal({ date, foods, entry, initialMeal, onClose, onRequestDelet
     onClose={pictureOpen ? () => setPictureOpen(false) : deleteCandidate ? cancelFoodDeletion : close}
     onBack={back}
     backLabel={browse.view === "edit" ? "Back" : "Choose a different food"}
-    wide
+    size="wide"
     hideHeader={pictureOpen}
   >
     <div className="add-layout">
@@ -1705,7 +1709,7 @@ export default function App() {
       </div>
       <div className="settings-group">
         <h3>Goals</h3>
-        <button onClick={() => setModal("targets")}><span>Targets &amp; day</span><small>Energy and macro goals, when a day starts, and what gets flagged</small></button>
+        <button onClick={() => setModal("targets")}><span>Daily targets</span><small>Energy and macro goals, when a day starts, and what gets flagged</small></button>
       </div>
       <div className="settings-group">
         <h3>Data</h3>

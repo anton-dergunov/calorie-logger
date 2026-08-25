@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KEYBOARD_INSET, observeViewport, VIEWPORT_HEIGHT, VIEWPORT_TOP } from "./viewport";
+import { observeViewport, VIEWPORT_HEIGHT, VIEWPORT_TOP } from "./viewport";
 
 type Listener = () => void;
 
@@ -29,8 +29,7 @@ function readVariables() {
   const style = document.documentElement.style;
   return {
     height: style.getPropertyValue(VIEWPORT_HEIGHT),
-    top: style.getPropertyValue(VIEWPORT_TOP),
-    keyboard: style.getPropertyValue(KEYBOARD_INSET)
+    top: style.getPropertyValue(VIEWPORT_TOP)
   };
 }
 
@@ -45,22 +44,22 @@ describe("viewport", () => {
     window.innerHeight = 900;
     const stop = observeViewport();
 
-    expect(readVariables()).toEqual({ height: "900px", top: "0px", keyboard: "0px" });
+    expect(readVariables()).toEqual({ height: "900px", top: "0px" });
     stop();
   });
 
-  it("reports the visible box and what the keyboard covers", async () => {
+  it("shrinks to what the keyboard leaves visible", async () => {
     window.innerHeight = 900;
     const stub = stubVisualViewport(900);
     const stop = observeViewport();
-    expect(readVariables()).toEqual({ height: "900px", top: "0px", keyboard: "0px" });
+    expect(readVariables()).toEqual({ height: "900px", top: "0px" });
 
     // A keyboard opens: iOS leaves the layout viewport alone and shrinks the visual one.
     stub.viewport.height = 560;
     stub.emit("resize");
     await new Promise((resolve) => requestAnimationFrame(resolve));
 
-    expect(readVariables()).toEqual({ height: "560px", top: "0px", keyboard: "340px" });
+    expect(readVariables()).toEqual({ height: "560px", top: "0px" });
     stop();
   });
 
@@ -75,7 +74,7 @@ describe("viewport", () => {
 
     // Fixed elements are positioned against the layout viewport, so a dialog has to be told how
     // far the visible box has moved as well as how tall it is.
-    expect(readVariables()).toEqual({ height: "560px", top: "120px", keyboard: "220px" });
+    expect(readVariables()).toEqual({ height: "560px", top: "120px" });
     stop();
   });
 
