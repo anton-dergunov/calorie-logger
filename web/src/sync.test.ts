@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backendSession } from "./api";
 import { localDateString } from "./date";
 import { localStore, SCHEMA_VERSION } from "./localStore";
-import { shouldSyncWhenTriggered, syncEngine } from "./sync";
+import { shouldSchedulePageSync, shouldSyncWhenTriggered, syncEngine } from "./sync";
 import type { Food, FoodInput, StoredEntry, SyncResponse } from "./types";
 
 const TODAY = localDateString();
@@ -275,6 +275,7 @@ describe("whether a background trigger should run a sync", () => {
   it("syncs a visible browser tab", () => {
     stubVisibility("visible");
     expect(shouldSyncWhenTriggered()).toBe(true);
+    expect(shouldSchedulePageSync()).toBe(true);
   });
 
   it("does not sync a background browser tab", () => {
@@ -288,5 +289,6 @@ describe("whether a background trigger should run a sync", () => {
     stubVisibility("hidden");
     window.webkit = { messageHandlers: { calorieLogger: { postMessage: vi.fn() } } };
     expect(shouldSyncWhenTriggered()).toBe(true);
+    expect(shouldSchedulePageSync()).toBe(false);
   });
 });

@@ -1651,6 +1651,18 @@ describe("where the app's surfaces live", () => {
     await screen.findByText("Drag entries into place");
   });
 
+  it("lets the native host wake synchronization while its window is closed", async () => {
+    stubNativeHost();
+    const syncNow = vi.spyOn(syncEngine, "syncNow").mockResolvedValue();
+    await emptyDay();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    act(() => window.calorieLogger!.syncNow());
+
+    expect(syncNow).toHaveBeenCalledOnce();
+  });
+
   it("steps the day from the menu bar without losing today", async () => {
     const today = localDateString();
     await day([entry("a", "Oats", "breakfast", 0)]);

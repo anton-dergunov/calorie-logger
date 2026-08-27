@@ -1317,7 +1317,8 @@ export default function App() {
       startReordering: () => { setReordering(true); setSelecting(false); setSelected(new Set()); setModal(null); },
       previousDay: () => setDate((current) => moveDate(current, -1)),
       nextDay: () => setDate((current) => moveDate(current, 1)),
-      jumpToToday: () => setDate(menuDate)
+      jumpToToday: () => setDate(menuDate),
+      syncNow: () => { void syncEngine.syncNow(); }
     };
     return () => { delete window.calorieLogger; };
   }, [menuDate]);

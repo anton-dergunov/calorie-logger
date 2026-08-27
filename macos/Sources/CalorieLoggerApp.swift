@@ -1,6 +1,42 @@
 import AppKit
 import WebKit
 
+/// WebKit can suspend page timers for a view that has never been ordered front. AppKit owns the
+/// native host's refresh cadence so the menu-bar summary keeps moving while the window is closed.
+@MainActor
+final class NativeSyncScheduler: NSObject {
+    static let interval: TimeInterval = 15
+
+    private let refreshInterval: TimeInterval
+    private let refresh: () -> Void
+    private var timer: Timer?
+
+    init(interval: TimeInterval = NativeSyncScheduler.interval, refresh: @escaping () -> Void) {
+        self.refreshInterval = interval
+        self.refresh = refresh
+    }
+
+    func start() {
+        stop()
+        let timer = Timer(
+            timeInterval: refreshInterval,
+            target: self,
+            selector: #selector(fire),
+            userInfo: nil,
+            repeats: true
+        )
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    @objc private func fire() { refresh() }
+}
+
 @main
 struct CalorieLoggerApplication {
     static func main() {
@@ -22,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     private var editingCommands: [NSMenuItem] = []
     private let updates = UpdateService()
     private let settings = SettingsWindowController()
+    private lazy var backgroundSync = NativeSyncScheduler { [weak self] in self?.requestMenuSync() }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu()
@@ -30,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         menuBar = MenuBarController(
             openLog: { [weak self] in self?.showWindow() },
             addFood: { [weak self] in self?.showAddFood() },
+            requestSync: { [weak self] in self?.requestMenuSync() },
             installUpdate: { [weak self] in self?.installUpdate() }
         )
         bridge.onSummary = { [weak self] summary in self?.menuBar.update(summary) }
@@ -50,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         } else {
             showWindow()
         }
+        backgroundSync.start()
 
         // Calorie Logger is a menu bar application, so it is only useful once it is running.
         LoginItem.enableOnFirstLaunch()
@@ -61,6 +100,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        backgroundSync.stop()
+    }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showWindow()
@@ -120,6 +163,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         NSApp.setActivationPolicy(.regular)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // AppKit documents that activation may lag behind the request. A second pass on the next
+        // run-loop turn also runs after a status popover has finished returning focus to its owner.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window?.isVisible == true else { return }
+            if !NSApp.isActive { NSApp.activate(ignoringOtherApps: true) }
+            self.window?.makeKeyAndOrderFront(nil)
+        }
     }
 
     /// Hides the Dock icon once the window is no longer showing; the status item stays available.
@@ -129,6 +179,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     private func showAddFood() {
         showWebCommand("openAddFood")
+    }
+
+    /// AppKit drives this call because an off-screen WKWebView cannot be trusted to run its own
+    /// interval. The interface still owns the exchange and publishes the resulting summary.
+    private func requestMenuSync() {
+        webView?.evaluateJavaScript(
+            "window.calorieLogger ? (window.calorieLogger.syncNow(), true) : false",
+            completionHandler: nil
+        )
     }
 
     private func showWebCommand(_ command: String) {

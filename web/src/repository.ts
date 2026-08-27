@@ -87,6 +87,8 @@ declare global {
       previousDay(): void;
       nextDay(): void;
       jumpToToday(): void;
+      /** Wakes the web-owned sync engine when the native host is running without a window. */
+      syncNow(): void;
     };
   }
 }

@@ -41,6 +41,14 @@ export function shouldSyncWhenTriggered(): boolean {
 }
 
 /**
+ * A browser owns its own refresh cadence. The macOS host does not: WebKit may suspend an
+ * off-screen page's timers, so AppKit wakes the interface on the same cadence instead.
+ */
+export function shouldSchedulePageSync(): boolean {
+  return !isNativeHost();
+}
+
+/**
  * Exchanges local changes for remote ones.
  *
  * Nothing here decides what the owner may do — the interface has already written every edit to
@@ -85,7 +93,7 @@ class SyncEngine {
     const trigger = () => { void this.syncNow(); };
     const whenVisible = () => { if (shouldSyncWhenTriggered()) trigger(); };
 
-    this.timer = window.setInterval(whenVisible, SYNC_INTERVAL);
+    if (shouldSchedulePageSync()) this.timer = window.setInterval(whenVisible, SYNC_INTERVAL);
     window.addEventListener("focus", whenVisible);
     window.addEventListener("online", trigger);
     document.addEventListener("visibilitychange", whenVisible);

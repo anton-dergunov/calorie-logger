@@ -104,25 +104,47 @@ struct MenuPopoverView: View {
 }
 
 @MainActor
-final class MenuBarController: NSObject {
+final class PopoverActionQueue {
+    private var pending: (() -> Void)?
+
+    func prepare(_ action: @escaping () -> Void) {
+        pending = action
+    }
+
+    func popoverDidClose() {
+        guard let action = pending else { return }
+        pending = nil
+        // Let the transient popover finish restoring the previously active application before a
+        // command deliberately activates Calorie Logger.
+        DispatchQueue.main.async(execute: action)
+    }
+}
+
+@MainActor
+final class MenuBarController: NSObject, NSPopoverDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: 37)
     private let popover = NSPopover()
     private let model = MenuSummaryModel()
+    private let actions = PopoverActionQueue()
+    private let requestSync: () -> Void
     private var updateAvailable = false
 
     init(
         openLog: @escaping () -> Void,
         addFood: @escaping () -> Void,
+        requestSync: @escaping () -> Void,
         installUpdate: @escaping () -> Void
     ) {
+        self.requestSync = requestSync
         super.init()
         popover.behavior = .transient
         popover.animates = false
+        popover.delegate = self
         popover.contentViewController = NSHostingController(rootView: MenuPopoverView(
             model: model,
-            openLog: { [weak self] in self?.popover.close(); openLog() },
-            addFood: { [weak self] in self?.popover.close(); addFood() },
-            installUpdate: { [weak self] in self?.popover.close(); installUpdate() }
+            openLog: { [weak self] in self?.closePopover(then: openLog) },
+            addFood: { [weak self] in self?.closePopover(then: addFood) },
+            installUpdate: { [weak self] in self?.closePopover(then: installUpdate) }
         ))
         if let button = statusItem.button {
             button.action = #selector(togglePopover)
@@ -177,10 +199,20 @@ final class MenuBarController: NSObject {
         statusItem.button?.image = NSImage(systemSymbolName: "exclamationmark.circle", accessibilityDescription: model.connectionMessage)
     }
 
+    private func closePopover(then action: @escaping () -> Void) {
+        actions.prepare(action)
+        popover.close()
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        actions.popoverDidClose()
+    }
+
     @objc private func togglePopover() {
         guard let button = statusItem.button else { return }
         if popover.isShown { popover.performClose(nil) }
         else {
+            requestSync()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             DispatchQueue.main.async { [weak self, weak button] in
                 guard let self, let button, let buttonWindow = button.window,

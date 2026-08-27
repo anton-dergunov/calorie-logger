@@ -158,6 +158,42 @@ final class NativeModelTests: XCTestCase {
         XCTAssertEqual(summary.targets.protein, 120)
     }
 
+    @MainActor
+    func testNativeSyncSchedulerRepeatsWithoutAWebPageTimer() async {
+        var refreshes = 0
+        let repeated = expectation(description: "Native sync repeated")
+        let scheduler = NativeSyncScheduler(interval: 0.01) {
+            refreshes += 1
+            if refreshes == 2 { repeated.fulfill() }
+        }
+
+        scheduler.start()
+        await fulfillment(of: [repeated], timeout: 1)
+        scheduler.stop()
+
+        XCTAssertGreaterThanOrEqual(refreshes, 2)
+    }
+
+    @MainActor
+    func testPopoverActionWaitsUntilClosingHasFinishedAndRunsOnce() async {
+        let actions = PopoverActionQueue()
+        var runs = 0
+        let ran = expectation(description: "Popover action ran")
+        actions.prepare {
+            runs += 1
+            ran.fulfill()
+        }
+
+        actions.popoverDidClose()
+        XCTAssertEqual(runs, 0, "The action raced the transient popover while it was closing.")
+        await fulfillment(of: [ran], timeout: 1)
+        XCTAssertEqual(runs, 1)
+
+        actions.popoverDidClose()
+        await Task.yield()
+        XCTAssertEqual(runs, 1)
+    }
+
     func testSessionRequestContainsOnlyThePersistedFields() throws {
         let json = #"{"session":{"baseUrl":"https://calorie-logger.example.test","email":"person@example.test","token":"secret"}}"#
         let request = try JSONDecoder().decode(SessionRequest.self, from: Data(json.utf8))
@@ -287,6 +323,12 @@ final class WebInterfaceTests: XCTestCase {
         let text = try await webView.evaluateJavaScript("document.body.innerText") as? String
         XCTAssertGreaterThan((childValue as? NSNumber)?.intValue ?? 0, 0, "Rendered page text was: \(text ?? "<empty>")")
         XCTAssertTrue(text?.localizedCaseInsensitiveContains("Sign in") == true, "Rendered page text was: \(text ?? "<empty>")")
+        let command = try await webView.evaluateJavaScript("typeof window.calorieLogger?.syncNow") as? String
+        XCTAssertEqual(command, "function", "The native host had no way to wake synchronization.")
+        let invoked = try await webView.evaluateJavaScript(
+            "window.calorieLogger ? (window.calorieLogger.syncNow(), true) : false"
+        ) as? Bool
+        XCTAssertEqual(invoked, true)
     }
 
     @MainActor
