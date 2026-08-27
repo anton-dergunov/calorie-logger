@@ -127,7 +127,18 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     private let model = MenuSummaryModel()
     private let actions = PopoverActionQueue()
     private let requestSync: () -> Void
+    private let openLog: () -> Void
+    private let addFood: () -> Void
     private var updateAvailable = false
+
+    private lazy var contextMenu: NSMenu = {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Open Calorie Logger", action: #selector(openLogFromMenu), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Add Food", action: #selector(addFoodFromMenu), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Quit Calorie Logger", action: #selector(quitApp), keyEquivalent: "").target = self
+        return menu
+    }()
 
     init(
         openLog: @escaping () -> Void,
@@ -136,6 +147,8 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         installUpdate: @escaping () -> Void
     ) {
         self.requestSync = requestSync
+        self.openLog = openLog
+        self.addFood = addFood
         super.init()
         popover.behavior = .transient
         popover.animates = false
@@ -147,8 +160,9 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             installUpdate: { [weak self] in self?.closePopover(then: installUpdate) }
         ))
         if let button = statusItem.button {
-            button.action = #selector(togglePopover)
+            button.action = #selector(handleClick)
             button.target = self
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.toolTip = "Calorie Logger totals"
             button.image = NSImage(systemSymbolName: "exclamationmark.circle", accessibilityDescription: "Open Calorie Logger to connect")
         }
@@ -208,7 +222,23 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         actions.popoverDidClose()
     }
 
-    @objc private func togglePopover() {
+    @objc private func handleClick() {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            // Assigning the menu makes performClick present it instead of re-firing this action;
+            // clearing it afterward restores plain left-click behavior for togglePopover.
+            statusItem.menu = contextMenu
+            statusItem.button?.performClick(nil)
+            statusItem.menu = nil
+        } else {
+            togglePopover()
+        }
+    }
+
+    @objc private func openLogFromMenu() { openLog() }
+    @objc private func addFoodFromMenu() { addFood() }
+    @objc private func quitApp() { NSApplication.shared.terminate(nil) }
+
+    private func togglePopover() {
         guard let button = statusItem.button else { return }
         if popover.isShown { popover.performClose(nil) }
         else {
