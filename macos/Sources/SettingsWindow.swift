@@ -64,12 +64,15 @@ final class SettingsRouter: ObservableObject {
 final class SettingsWindowController {
     private var window: NSWindow?
 
+    /// The window this Mac's own preferences are shown in, once there is one. Offered so the
+    /// application can ask whether anything of its own is still on screen before it goes back to
+    /// being a menu-bar accessory.
+    var openWindow: NSWindow? { window }
+
     func show(updates: UpdateService, pane: SettingsView.Pane, checkNow: @escaping () -> Void, installUpdate: @escaping () -> Void) {
-        NSApp.setActivationPolicy(.regular)
         SettingsRouter.shared.pane = pane
         if let window {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            AppActivation.bringForward(window)
             return
         }
         let controller = NSHostingController(
@@ -86,8 +89,7 @@ final class SettingsWindowController {
         window.minSize = NSSize(width: 560, height: 380)
         window.setFrameAutosaveName("SettingsWindow")
         window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
         self.window = window
+        AppActivation.bringForward(window)
     }
 }

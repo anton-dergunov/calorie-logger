@@ -352,8 +352,7 @@ final class UpdateService: ObservableObject {
     /// accessory with no Dock icon, so a modal alert would open behind everything. Coming forward
     /// first is what makes it visible.
     private func presentFailure(_ message: String) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.bringForward()
         let alert = NSAlert()
         alert.messageText = "Calorie Logger could not install the update"
         alert.informativeText = message
@@ -363,8 +362,7 @@ final class UpdateService: ObservableObject {
     }
 
     private func notify(title: String, body: String) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.bringForward()
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = body

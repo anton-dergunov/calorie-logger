@@ -154,6 +154,22 @@ Keeping up to date matters more here than in most apps: a release can change the
 records that sync, and a device running an older shape is refused a merge until it updates. It
 keeps working locally in the meantime and tells you why.
 
+### If the Mac app is too far behind to update itself
+
+A copy that has gone a long time without an update can be old enough that its own updater is one of
+the things fixed since — the download starts and then crawls, or never finishes at all. Replace it
+by hand, once:
+
+1. Click the menu bar meters and choose **Quit Calorie Logger**. Closing the window is not enough;
+   the app stays in the menu bar.
+2. Open Calorie Logger in a browser on that Mac and download the app from **Settings → About**.
+3. Drag it to **Applications**, replacing the copy already there, and open it. Because this one came
+   through a browser, macOS asks once more whether to trust it: **System Settings → Privacy &
+   Security → Open Anyway**.
+
+**Settings → Updates** then shows the version you just installed, and updating in place works again
+from there.
+
 ## Your data
 
 **Deployments keep your data.** The database is copied to `<install root>/backups/<timestamp>/`

@@ -67,6 +67,52 @@ final class NativeModelTests: XCTestCase {
         XCTAssertEqual(dayMenu.item(withTitle: "Daily Targets…")?.keyEquivalentModifierMask, [.command, .option])
     }
 
+    /// The menu bar follows activation rather than the activation policy, so coming forward from
+    /// the menu bar has to put Calorie Logger's own menu back even when the application already
+    /// believes it is active -- which is exactly the case the old `!NSApp.isActive` guard skipped,
+    /// leaving another application's menu above Calorie Logger's own window.
+    @MainActor
+    func testComingForwardRestoresCalorieLoggersOwnMenuBar() async {
+        let delegate = AppDelegate()
+        delegate.installMainMenu()
+        let ours = NSApp.mainMenu
+        NSApp.mainMenu = NSMenu(title: "Another application")
+
+        AppActivation.bringForward(nil)
+        let settled = expectation(description: "the deferred pass has run")
+        DispatchQueue.main.async { settled.fulfill() }
+        await fulfillment(of: [settled], timeout: 2)
+
+        XCTAssertTrue(NSApp.mainMenu === ours, "coming forward left another application's menu on show")
+    }
+
+    /// Closing the log window used to drop straight back to the menu bar, which took the Dock icon
+    /// and the menu bar out from under the Settings window standing beside it.
+    @MainActor
+    func testTheMenuBarIsKeptWhileAnyCalorieLoggerWindowIsStillOnScreen() {
+        let log = testWindow()
+        let settings = testWindow()
+        defer { log.orderOut(nil); settings.orderOut(nil) }
+
+        settings.orderFront(nil)
+        XCTAssertFalse(AppActivation.shouldReturnToMenuBar(owning: [log, settings]),
+                       "the Dock icon was given up with Settings still open")
+
+        settings.orderOut(nil)
+        XCTAssertTrue(AppActivation.shouldReturnToMenuBar(owning: [log, settings]))
+        XCTAssertTrue(AppActivation.shouldReturnToMenuBar(owning: [nil, nil]))
+    }
+
+    @MainActor
+    private func testWindow() -> NSWindow {
+        NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 120),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+    }
+
     /// The editing commands act on whatever holds focus. Left to itself the web view answers for
     /// all of them all the time, which offered Copy with nothing selected and a Select All that
     /// selected the whole page.

@@ -160,21 +160,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     private func raiseWindow() {
-        NSApp.setActivationPolicy(.regular)
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        // AppKit documents that activation may lag behind the request. A second pass on the next
-        // run-loop turn also runs after a status popover has finished returning focus to its owner.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.window?.isVisible == true else { return }
-            if !NSApp.isActive { NSApp.activate(ignoringOtherApps: true) }
-            self.window?.makeKeyAndOrderFront(nil)
-        }
+        AppActivation.bringForward(window)
     }
 
-    /// Hides the Dock icon once the window is no longer showing; the status item stays available.
+    /// Hides the Dock icon once nothing of Calorie Logger's is left on screen; the status item
+    /// stays available. Both the log window and the Settings window report their closing here, and
+    /// neither of them going away is on its own a reason to give up the menu bar.
     func windowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        AppActivation.returnToMenuBar(owning: [window, settings.openWindow])
     }
 
     private func showAddFood() {
@@ -245,6 +238,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let windowItem = windowMenuItem()
         mainMenu.addItem(windowItem)
         NSApp.mainMenu = mainMenu
+        // Held so coming forward from the menu bar can put it back: the bar is rebuilt for whichever
+        // application is frontmost, and a policy change alone does not make that happen.
+        AppActivation.mainMenu = mainMenu
         NSApp.windowsMenu = windowItem.submenu
         setTextEditing(false)
     }
@@ -366,8 +362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     /// An update installed without being clicked for still asks before the restart, because
     /// relaunching underneath someone mid-entry is the thing the application must never do.
     private func confirmRestart(for release: MacRelease) -> Bool {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.bringForward()
         let alert = NSAlert()
         alert.messageText = "Calorie Logger has been updated"
         alert.informativeText = "Build \(release.build) is installed and starts the next time Calorie Logger opens."
@@ -386,6 +381,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             },
             installUpdate: { [weak self] in self?.installUpdate() }
         )
+        settings.openWindow?.delegate = self
     }
 
     @objc private func settingsMenu() { showSettings(.general) }

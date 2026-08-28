@@ -12,6 +12,7 @@
 		760DE0032DB64C3D87C6C9F3 /* CalorieLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0F08540E2DF2B8383D095B /* CalorieLoggerApp.swift */; };
 		79601945B4D744E39CD52944 /* WebInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7BBFFD0BBA48D7B189461CC /* WebInterface.swift */; };
 		947CE6543B505B2D8B05DCEF /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 235FB1BF3EE2A6B9C5D1DA57 /* Security.framework */; };
+		9682844C88F1517C658517E9 /* Activation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90352147D50B2B8A2CB357D5 /* Activation.swift */; };
 		A21AE054C4E325FCBC82FCAE /* DatabaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298781464CB02A6E231CC46D /* DatabaseTests.swift */; };
 		A2B516171547516669F5DF96 /* UpdateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C27BADCC50A38D466F1B164 /* UpdateService.swift */; };
 		A2F06B1503DE30F697579085 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1981B209D6A5791652F209D4 /* Assets.xcassets */; };
@@ -45,6 +46,7 @@
 		64072F09E375E18B46A6AD0F /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
 		8C0EA2A53396A4EDF8A40F7D /* LaunchContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchContext.swift; sourceTree = "<group>"; };
 		8F399216DA1D4546E85B0CA4 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		90352147D50B2B8A2CB357D5 /* Activation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Activation.swift; sourceTree = "<group>"; };
 		C24AEC919F997AC57363DA9A /* CalorieLoggerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CalorieLoggerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C7BBFFD0BBA48D7B189461CC /* WebInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebInterface.swift; sourceTree = "<group>"; };
 		CC99D2636B9A3D58842DE849 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -88,6 +90,7 @@
 		2CFD4607766277CB35C53A18 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				90352147D50B2B8A2CB357D5 /* Activation.swift */,
 				2C98EC042D5CC5437EA305D8 /* AppRelease.swift */,
 				167CC6035124B49181317016 /* Bridge.swift */,
 				4A0F08540E2DF2B8383D095B /* CalorieLoggerApp.swift */,
@@ -268,6 +271,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9682844C88F1517C658517E9 /* Activation.swift in Sources */,
 				D5E1ACFA5DC140ACDB4F524F /* AppRelease.swift in Sources */,
 				C07BE0DD94C52F6851285B52 /* Bridge.swift in Sources */,
 				760DE0032DB64C3D87C6C9F3 /* CalorieLoggerApp.swift in Sources */,
