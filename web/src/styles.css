@@ -38,6 +38,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .connection-signout button { border: 0; background: transparent; color: var(--warning); padding: 0; cursor: pointer; }
 .signout-warning { margin: 0 0 12px; color: var(--warning); font-size: 12px; line-height: 1.45; }
 main { width: min(1440px, calc(100% - 48px)); margin: 0 auto; flex: 1; }
+/* The one place a whole-page swipe becomes a day change. `pan-y` leaves vertical scrolling native,
+   the same technique a log row uses for its own swipe; `overflow-x` keeps the live-follow nudge
+   from ever widening the page's own horizontal scroll region. The transition is a class, applied
+   only once the finger has lifted, so it never lags behind a live drag. */
+.day-view { touch-action: pan-y; overflow-x: hidden; }
+.day-view.is-settling { transition: transform .16s ease; }
 .date-header { position: relative; width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: center; margin: 18px auto 18px; padding: 0 76px; text-align: center; }
 .date-navigation { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 14px; }
 .date-title { position: relative; min-width: 0; display: grid; justify-items: center; gap: 2px; }

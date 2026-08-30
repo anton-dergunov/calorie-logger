@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { localDateString, moveDate } from "./date";
+import { displayDate, localDateString, moveDate } from "./date";
 import { localStore } from "./localStore";
 import { backendSession, CalorieLoggerApiError, repository } from "./repository";
 import { syncEngine } from "./sync";
@@ -1555,6 +1555,145 @@ describe("entry gestures and bulk actions", () => {
 
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Delete entry" })).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(deleteEntries).toHaveBeenCalledWith(["a"]));
+  });
+});
+
+describe("page swipe navigation", () => {
+  const NO_TARGETS: Targets = { calories: null, protein: null, fat: null, carbs: null };
+  // The app always opens on today, whatever date a seeded day names, so the swipe has to be judged
+  // against today rather than against an arbitrary seeded date.
+  const SEEDED_DATE = localDateString();
+
+  const day = (entries: LogEntry[] = []) =>
+    seed({ day: { date: SEEDED_DATE, entries, totals: {} }, targets: NO_TARGETS, foods: [] });
+
+  // jsdom has no PointerEvent, and its stand-in drops every field the gesture reads. This is the
+  // smallest thing that carries a pointer type, a button and a position.
+  class TestPointerEvent extends MouseEvent {
+    pointerType: string;
+    pointerId: number;
+    constructor(type: string, init: MouseEventInit & { pointerType?: string; pointerId?: number } = {}) {
+      super(type, init);
+      this.pointerType = init.pointerType ?? "mouse";
+      this.pointerId = init.pointerId ?? 1;
+    }
+  }
+  beforeEach(() => { vi.stubGlobal("PointerEvent", TestPointerEvent); });
+
+  /** Stands in for an installed PWA, the one platform this gesture reacts on. */
+  function installedApp() {
+    vi.stubGlobal("navigator", { userAgent: "test", platform: "test", maxTouchPoints: 5, standalone: true });
+  }
+
+  function stubNativeHost() {
+    vi.stubGlobal("webkit", { messageHandlers: { calorieLogger: { postMessage: vi.fn().mockResolvedValue({ data: null }) } } });
+  }
+
+  const metricsGrid = () => screen.getByRole("region", { name: "Nutrition totals" });
+
+  /** A drag reported the way a real finger does, in several small steps rather than one jump — a
+      swipe that arrives in one report is exactly the shape that used to be misread as a scroll. */
+  function swipe(target: HTMLElement, dx: number, pointerType = "touch") {
+    const from = 300;
+    fireEvent.pointerDown(target, { pointerType, pointerId: 1, button: 0, clientX: from, clientY: 40 });
+    for (let step = 1; step <= 6; step += 1) {
+      fireEvent.pointerMove(document, { pointerType, pointerId: 1, clientX: from + (dx * step) / 6, clientY: 41 });
+    }
+    fireEvent.pointerUp(document, { pointerType, pointerId: 1, clientX: from + dx, clientY: 41 });
+  }
+
+  it("swipes left to the next day", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    swipe(metricsGrid(), -100);
+
+    expect(await screen.findByText(displayDate(moveDate(SEEDED_DATE, 1)).title)).toBeTruthy();
+  });
+
+  it("swipes right to the previous day", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    swipe(metricsGrid(), 100);
+
+    expect(await screen.findByText(displayDate(moveDate(SEEDED_DATE, -1)).title)).toBeTruthy();
+  });
+
+  it("snaps back without changing the day when the drag falls short", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    swipe(metricsGrid(), -20);
+
+    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+  });
+
+  it("leaves a row's own swipe alone, and does not change the day", async () => {
+    installedApp();
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+    const row = screen.getByRole("button", { name: "Edit Oats" }).closest<HTMLElement>("[role=row]")!;
+
+    swipe(row, -100);
+
+    expect(screen.getByRole("button", { name: "Copy…" })).toBeTruthy();
+    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+  });
+
+  it("does nothing in an ordinary browser tab", async () => {
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    swipe(metricsGrid(), -100);
+
+    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+  });
+
+  it("does nothing in the native macOS host, even though it counts as installed", async () => {
+    installedApp();
+    stubNativeHost();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    swipe(metricsGrid(), -100);
+
+    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+  });
+
+  it("does nothing for a mouse drag", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    swipe(metricsGrid(), -100, "mouse");
+
+    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+  });
+
+  it("does nothing while reordering, and ordinary taps still work", async () => {
+    installedApp();
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+    fireEvent.click(screen.getByRole("button", { name: "Reorder" }));
+    await screen.findByText("Drag entries into place");
+
+    swipe(metricsGrid(), -100);
+    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next day" }));
+    expect(await screen.findByText(displayDate(moveDate(SEEDED_DATE, 1)).title)).toBeTruthy();
   });
 });
 

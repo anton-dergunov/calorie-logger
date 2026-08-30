@@ -8,12 +8,13 @@ import { localStore, type DaySettings } from "./localStore";
 import { FoodVisualPicker } from "./FoodVisualPicker";
 import { MonthCalendar } from "./MonthCalendar";
 import { hasFinePointer, useRowGestures } from "./rowGestures";
+import { usePageSwipe } from "./pageSwipe";
 import { DEFAULT_FOOD_VISUAL, FoodVisual, foodVisualCatalog, isDefaultFoodVisual } from "./foodVisuals";
 import { rankFoodVisuals } from "./potion";
 import { backendSession, CalorieLoggerApiError, repository } from "./repository";
 import type { MacReleaseInfo } from "./repository";
 import { saveExportDocument } from "./export";
-import { alreadyInstalledOnThisDevice, canPromptInstall, detectedInstallPlatform, installUpdate, isNativeHost, promptInstall, shouldOfferMacApplication, shouldOfferMobileInstall, UPDATE_EVENT, updateStage, type UpdateStage } from "./pwa";
+import { alreadyInstalledOnThisDevice, canPromptInstall, detectedInstallPlatform, installUpdate, isInstalledApp, isNativeHost, promptInstall, shouldOfferMacApplication, shouldOfferMobileInstall, UPDATE_EVENT, updateStage, type UpdateStage } from "./pwa";
 import { appBuild, appVersion } from "./version";
 import { SyncChip, SyncPanel } from "./SyncStatus";
 import { syncEngine } from "./sync";
@@ -1214,6 +1215,10 @@ export default function App() {
   // A mouse can begin a drag by moving, because it never scrolls the page that way; a finger cannot,
   // and is given the press-and-hold instead.
   const finePointer = useMemo(hasFinePointer, []);
+  // Swiping between days is a mobile-app affordance: never in an ordinary browser tab, where a
+  // horizontal drag has other meanings, and never in the native host, whose own menu bar already
+  // steps the day.
+  const installedApp = useMemo(() => isInstalledApp() && !isNativeHost(), []);
   const [dropTarget, setDropTarget] = useState<DropTarget>();
   const dropTargetRef = useRef<DropTarget | undefined>(undefined);
   const [error, setError] = useState<string>();
@@ -1408,6 +1413,11 @@ export default function App() {
     onLift: lift,
     onMenu: useCallback((id: string, position: { x: number; y: number }) => setEntryMenu({ id, ...position }), [])
   });
+  const pageSwipe = usePageSwipe({
+    enabled: installedApp && !selecting && !reordering && !loading && modal === null,
+    onPrevious: useCallback(() => setDate((current) => moveDate(current, -1)), []),
+    onNext: useCallback(() => setDate((current) => moveDate(current, 1)), [])
+  });
 
   /** The day's entries in the order they are shown, so a keyboard move crosses meals as a drag does. */
   const orderedEntries = useMemo(
@@ -1533,6 +1543,11 @@ export default function App() {
         <a className="banner-action" href={repository.downloadURL(macApp.url)}>Download</a>
         <button className="banner-dismiss" onClick={dismissMacBanner} aria-label="Do not offer the Mac app again">×</button>
       </section>}
+      <div
+        className={`day-view ${pageSwipe.drag?.settling ? "is-settling" : ""}`}
+        style={pageSwipe.drag ? { transform: `translateX(${pageSwipe.drag.offset}px)` } : undefined}
+        {...pageSwipe.containerProps}
+      >
       <section className="date-header">
         {date !== menuDate && <button className="today-button" onClick={() => setDate(menuDate)} aria-label="Go to today" title="Go to today"><HomeIcon /></button>}
         <div className="date-navigation">
@@ -1665,6 +1680,7 @@ export default function App() {
           })}
         </div>}
       </section>
+      </div>
     </main>
 
     {modal === "add" && <AddFoodModal
