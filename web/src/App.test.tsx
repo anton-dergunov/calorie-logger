@@ -1694,6 +1694,56 @@ describe("page swipe navigation", () => {
     expect(folding()).toBe(false);
   });
 
+  it("holds off the platform's own scrolling once the drag is its own", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    // Safari builds pointer events on touch events and ignores `preventDefault` on the former, so
+    // this is the only thing standing between a drifting finger and Safari taking the touch away.
+    const beforeAnyDrag = new TouchEvent("touchmove", { cancelable: true, bubbles: true });
+    document.dispatchEvent(beforeAnyDrag);
+    expect(beforeAnyDrag.defaultPrevented).toBe(false);
+
+    await hold({ x: 300, y: 560 }, -90);
+
+    const whileTurning = new TouchEvent("touchmove", { cancelable: true, bubbles: true });
+    document.dispatchEvent(whileTurning);
+    expect(whileTurning.defaultPrevented).toBe(true);
+  });
+
+  it("leaves scrolling alone when the movement was never a page turn", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    // Straight down the page: given up as a scroll, and it has to stay one.
+    fireEvent.pointerDown(dayView(), { pointerType: "touch", pointerId: 1, button: 0, clientX: 300, clientY: 400 });
+    for (const y of [408, 420, 436, 456]) {
+      fireEvent.pointerMove(document, { pointerType: "touch", pointerId: 1, clientX: 301, clientY: y });
+    }
+
+    const scrolling = new TouchEvent("touchmove", { cancelable: true, bubbles: true });
+    document.dispatchEvent(scrolling);
+    expect(scrolling.defaultPrevented).toBe(false);
+  });
+
+  it("still turns the day when the platform takes the touch away mid-drag", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    await hold({ x: 300, y: 560 }, -120);
+    // A cancelled pointer reports wherever the platform took it rather than where the finger was:
+    // read literally this one says the finger never moved, and the day the owner asked for is lost.
+    fireEvent.pointerCancel(document, { pointerType: "touch", pointerId: 1, clientX: 300, clientY: 561 });
+
+    expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, 1)).title })).toBeTruthy();
+  });
+
   it("lifts a top corner when the page is taken hold of near the top", async () => {
     installedApp();
     await day();

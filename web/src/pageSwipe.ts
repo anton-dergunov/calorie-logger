@@ -297,28 +297,47 @@ export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions):
       current.target = { x: dx, y: dy };
       if (current.corner) follow(current.corner);
     };
-    const up = (upEvent: PointerEvent) => {
+    /**
+     * The one thing that actually stops Safari scrolling.
+     *
+     * WebKit builds Pointer Events on top of Touch Events, and `preventDefault` on a pointer event
+     * does not suppress a scroll -- only a non-passive `touchmove` does. Without this, deviating
+     * even slightly from horizontal mid-drag let Safari claim the touch for its own elastic scroll
+     * and hand back a `pointercancel`, which cancelled the turn under the finger. Chrome honours the
+     * pointer event, which is why this was invisible on Android. Only once the drag is ours: a
+     * movement still being judged, or one already given up as a scroll, must scroll as it always did.
+     */
+    const scrollAway = (touchEvent: TouchEvent) => {
+      if (pending.current?.phase === "dragging" && touchEvent.cancelable) touchEvent.preventDefault();
+    };
+    const finish = (upEvent: PointerEvent, cancelled: boolean) => {
       const current = pending.current;
       if (!current || upEvent.pointerId !== current.pointerId) return;
       if (current.phase !== "dragging" || !current.corner || !current.towards) { release(); return; }
       const corner = current.corner;
       const towards = current.towards;
-      // What the finger did decides; where the paper had got to is where the rest of the turn
-      // starts from, so it carries on from where it was rather than jumping to catch up.
-      const delta = { x: upEvent.clientX - current.x, y: upEvent.clientY - current.y };
+      // What the finger did decides; where the paper had got to is where the rest of the turn starts
+      // from, so it carries on from where it was rather than jumping to catch up. A cancelled
+      // pointer reports wherever the platform took it, so the last movement we saw is the honest
+      // answer to what the owner asked for.
+      const delta = cancelled ? current.target : { x: upEvent.clientX - current.x, y: upEvent.clientY - current.y };
       const from = clampReach(corner, current.drawn, TILT);
       release();
       if (Math.abs(delta.x) >= COMMIT_DISTANCE && (delta.x < 0) === (towards === "next")) {
         sweep(corner, towards, from);
       } else settleBack(corner, towards, from);
     };
+    const up = (upEvent: PointerEvent) => finish(upEvent, false);
+    const cancel = (cancelEvent: PointerEvent) => finish(cancelEvent, true);
+    document.addEventListener("touchmove", scrollAway, { passive: false });
     document.addEventListener("pointermove", move, { passive: false });
     document.addEventListener("pointerup", up);
-    document.addEventListener("pointercancel", up);
+    document.addEventListener("pointercancel", cancel);
     detach.current = () => {
+      document.removeEventListener("touchmove", scrollAway);
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", up);
-      document.removeEventListener("pointercancel", up);
+      document.removeEventListener("pointercancel", cancel);
     };
   }, [enabled, release, rest, paint, settleBack, sweep]);
 
