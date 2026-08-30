@@ -3,8 +3,13 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 
 /**
  * A second gesture on the same touch surface as `rowGestures.ts`, but arbitrating a different
- * press: not "what does a hold on this row mean" but "is this drag meant for the whole day."
+ * press: not "what does a hold on this row mean" but "is this drag meant for the whole day".
  * A press that starts on a row is left entirely alone here, so the two never compete for it.
+ *
+ * The day turns like a page. It hinges on the edge the finger is heading towards, lifts as far as
+ * the drag carries it, and then either falls back flat or carries on over and away while the next
+ * day arrives from the far side. A nudge was not enough: shifted a few pixels the page read as the
+ * browser's own pinch-zoom rubber-banding rather than as an answer to the swipe.
  */
 
 /** Movement allowed before a direction is decided. Larger than a row's own tolerance: a misfired
@@ -18,21 +23,36 @@ const DIRECTION_BIAS = 1.75;
 /** Raw finger travel needed on release to commit to a day change. A fixed distance, not a share
     of the container's width, so the gesture feels the same on a phone and on a tablet. */
 const COMMIT_DISTANCE = 72;
-/** The visual offset is a damped fraction of the raw drag, capped well short of the finger's own
-    travel, so the content only ever nudges rather than tracks the drag outright — the "light"
-    the live-follow is named for. The commit decision still reads the raw, undamped distance. */
-const FOLLOW_RATE = 0.35;
-const FOLLOW_CAP = 28;
-/** How long the offset takes to return to rest once the finger lifts. */
-const SETTLE_MS = 160;
+/** Degrees of lift per pixel dragged, and how far a drag alone can lift the page. A drag that has
+    earned its day reaches about half the cap, so the page is plainly turning before it is let go. */
+const LIFT_RATE = 0.18;
+const LIFT_CAP = 22;
+/** How far the page carries on turning once the day is committed. Short of a right angle: the page
+    is edge-on and gone well before then, and the last degrees would only cost time. */
+const TURN_AWAY = 78;
+/** Paired with the transitions and keyframes on `.day-view` in `styles.css`. `LEAVE_MS` is also how
+    long the day itself waits to change, so the page that turns away is the one being left. */
+const LEAVE_MS = 150;
+const RETURN_MS = 200;
+const ARRIVE_MS = 190;
 
 type Phase = "watching" | "dragging";
+type Towards = "next" | "previous";
 
 interface Pending {
   pointerId: number;
   phase: Phase;
   x: number;
   y: number;
+  towards: Towards | undefined;
+}
+
+export interface PageTurn {
+  /** Degrees the page has lifted. Negative hinges on the left, positive on the right. */
+  angle: number;
+  hinge: "left" | "right";
+  towards: Towards;
+  stage: "dragging" | "leaving" | "arriving" | "returning";
 }
 
 export interface PageSwipeOptions {
@@ -44,40 +64,86 @@ export interface PageSwipeOptions {
 
 export interface PageSwipe {
   containerProps: { onPointerDown(event: ReactPointerEvent): void };
-  /** Present only while a drag is live or settling back to rest; absent otherwise so the resting
-      DOM carries no inline style to fight the stylesheet's own transition. */
-  drag: { offset: number; settling: boolean } | undefined;
+  /** Present only while the page is turning; absent at rest, so the resting DOM carries no inline
+      transform to fight the stylesheet. */
+  turn: PageTurn | undefined;
 }
 
-function follow(dx: number): number {
-  return Math.max(-FOLLOW_CAP, Math.min(FOLLOW_CAP, dx * FOLLOW_RATE));
+/** A page turning end over end is exactly the motion the preference is asking about, so the day
+    changes without one. The drag's own following is direct manipulation and stays. */
+function reducedMotion(): boolean {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
+
+const hingeFor = (towards: Towards) => (towards === "next" ? "left" : "right");
 
 export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions): PageSwipe {
   const pending = useRef<Pending | null>(null);
   const detach = useRef<(() => void) | undefined>(undefined);
-  const [drag, setDrag] = useState<{ offset: number; settling: boolean } | undefined>(undefined);
+  const timer = useRef<number | undefined>(undefined);
+  /** True only while the leaving page is still on screen, when the day it belongs to has not
+      changed yet and a second gesture would lose it. */
+  const leaving = useRef(false);
+  const [turn, setTurn] = useState<PageTurn | undefined>(undefined);
 
-  const settle = useCallback(() => {
+  const release = useCallback(() => {
     pending.current = null;
     detach.current?.();
     detach.current = undefined;
-    setDrag((current) => {
-      if (!current || current.offset === 0) return undefined;
-      window.setTimeout(() => setDrag(undefined), SETTLE_MS);
-      return { offset: 0, settling: true };
-    });
   }, []);
 
-  useEffect(() => settle, [settle]);
-  // Anything that stands the gesture down mid-drag (a mode change, a modal opening) settles it,
-  // rather than leaving a detached listener reacting to a finger the rest of the page has moved on from.
-  useEffect(() => { if (!enabled) settle(); }, [enabled, settle]);
+  const rest = useCallback(() => {
+    release();
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = undefined;
+    leaving.current = false;
+    setTurn(undefined);
+  }, [release]);
+
+  useEffect(() => rest, [rest]);
+  // Anything that stands the gesture down mid-turn -- a mode change, a modal opening -- puts the
+  // page back rather than leaving it lifted with no finger on it.
+  useEffect(() => { if (!enabled) rest(); }, [enabled, rest]);
+
+  const settleBack = useCallback((towards: Towards) => {
+    release();
+    setTurn({ angle: 0, hinge: hingeFor(towards), towards, stage: "returning" });
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => { timer.current = undefined; setTurn(undefined); }, RETURN_MS);
+  }, [release]);
+
+  const commit = useCallback((towards: Towards) => {
+    release();
+    const step = towards === "next" ? onNext : onPrevious;
+    if (reducedMotion()) { setTurn(undefined); step(); return; }
+    leaving.current = true;
+    setTurn({ angle: towards === "next" ? -TURN_AWAY : TURN_AWAY, hinge: hingeFor(towards), towards, stage: "leaving" });
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      leaving.current = false;
+      step();
+      setTurn({ angle: 0, hinge: hingeFor(towards), towards, stage: "arriving" });
+      timer.current = window.setTimeout(() => { timer.current = undefined; setTurn(undefined); }, ARRIVE_MS);
+    }, LEAVE_MS);
+  }, [release, onNext, onPrevious]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent) => {
     if (!enabled || event.pointerType === "mouse") return;
     if ((event.target as HTMLElement).closest("[data-drop-entry]")) return;
-    pending.current = { pointerId: event.pointerId, phase: "watching", x: event.clientX, y: event.clientY };
+    // A second finger is a pinch, and a pinch spreads sideways: read as a drag it would turn the
+    // page while the owner was only trying to zoom.
+    if (pending.current) {
+      if (pending.current.phase === "dragging" && pending.current.towards) settleBack(pending.current.towards);
+      else release();
+      return;
+    }
+    if (leaving.current) return;
+    // An arrival still settling is cut short rather than left to clear itself out from under the
+    // gesture that is starting now.
+    if (timer.current) rest();
+
+    const start: Pending = { pointerId: event.pointerId, phase: "watching", x: event.clientX, y: event.clientY, towards: undefined };
+    pending.current = start;
 
     const move = (moveEvent: PointerEvent) => {
       const current = pending.current;
@@ -86,21 +152,24 @@ export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions):
       const dy = moveEvent.clientY - current.y;
       if (current.phase === "watching") {
         if (Math.abs(dx) <= DEADZONE && Math.abs(dy) <= DEADZONE) return;
-        if (Math.abs(dx) <= Math.abs(dy) * DIRECTION_BIAS) { settle(); return; }
+        if (Math.abs(dx) <= Math.abs(dy) * DIRECTION_BIAS) { release(); return; }
         current.phase = "dragging";
       }
       moveEvent.preventDefault();
-      setDrag({ offset: follow(dx), settling: false });
+      current.towards = dx < 0 ? "next" : "previous";
+      setTurn({
+        angle: Math.max(-LIFT_CAP, Math.min(LIFT_CAP, dx * LIFT_RATE)),
+        hinge: hingeFor(current.towards), towards: current.towards, stage: "dragging"
+      });
     };
     const up = (upEvent: PointerEvent) => {
       const current = pending.current;
       if (!current || upEvent.pointerId !== current.pointerId) return;
-      if (current.phase === "dragging") {
-        const dx = upEvent.clientX - current.x;
-        if (dx <= -COMMIT_DISTANCE) onNext();
-        else if (dx >= COMMIT_DISTANCE) onPrevious();
-      }
-      settle();
+      if (current.phase !== "dragging") { release(); return; }
+      const dx = upEvent.clientX - current.x;
+      if (dx <= -COMMIT_DISTANCE) commit("next");
+      else if (dx >= COMMIT_DISTANCE) commit("previous");
+      else settleBack(current.towards ?? "next");
     };
     document.addEventListener("pointermove", move, { passive: false });
     document.addEventListener("pointerup", up);
@@ -110,7 +179,7 @@ export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions):
       document.removeEventListener("pointerup", up);
       document.removeEventListener("pointercancel", up);
     };
-  }, [enabled, onPrevious, onNext, settle]);
+  }, [enabled, release, rest, settleBack, commit]);
 
-  return { containerProps: { onPointerDown }, drag };
+  return { containerProps: { onPointerDown }, turn };
 }

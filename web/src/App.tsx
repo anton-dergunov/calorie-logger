@@ -1535,6 +1535,13 @@ export default function App() {
   if (!session?.token) return <div className="connection-page"><ConnectionForm initial={connectionDefaults} onConnected={(connected) => void beginSession(connected)} /></div>;
 
   const offerMacApp = macApp && shouldOfferMacApplication() && !macBannerDismissed;
+  // An arriving page is animated by the stylesheet from the side it came in on, so it must not
+  // carry a transform of its own for the animation to have to beat.
+  const turn = pageSwipe.turn;
+  const turnClass = turn ? (turn.stage === "arriving" ? `is-arriving-${turn.towards}` : `is-${turn.stage}`) : "";
+  const turnStyle = turn && turn.stage !== "arriving"
+    ? { transform: `perspective(1200px) rotateY(${turn.angle}deg)`, transformOrigin: `${turn.hinge} center` }
+    : undefined;
 
   return <div className="app-shell">
     <main>
@@ -1543,11 +1550,7 @@ export default function App() {
         <a className="banner-action" href={repository.downloadURL(macApp.url)}>Download</a>
         <button className="banner-dismiss" onClick={dismissMacBanner} aria-label="Do not offer the Mac app again">×</button>
       </section>}
-      <div
-        className={`day-view ${pageSwipe.drag?.settling ? "is-settling" : ""}`}
-        style={pageSwipe.drag ? { transform: `translateX(${pageSwipe.drag.offset}px)` } : undefined}
-        {...pageSwipe.containerProps}
-      >
+      <div className={`day-view ${turnClass}`} style={turnStyle} {...pageSwipe.containerProps}>
       <section className="date-header">
         {date !== menuDate && <button className="today-button" onClick={() => setDate(menuDate)} aria-label="Go to today" title="Go to today"><HomeIcon /></button>}
         <div className="date-navigation">

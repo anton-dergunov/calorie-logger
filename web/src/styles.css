@@ -37,13 +37,29 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .connection-signout { padding: 0 24px 24px; }
 .connection-signout button { border: 0; background: transparent; color: var(--warning); padding: 0; cursor: pointer; }
 .signout-warning { margin: 0 0 12px; color: var(--warning); font-size: 12px; line-height: 1.45; }
-main { width: min(1440px, calc(100% - 48px)); margin: 0 auto; flex: 1; }
-/* The one place a whole-page swipe becomes a day change. `pan-y` leaves vertical scrolling native,
-   the same technique a log row uses for its own swipe; `overflow-x` keeps the live-follow nudge
-   from ever widening the page's own horizontal scroll region. The transition is a class, applied
-   only once the finger has lifted, so it never lags behind a live drag. */
-.day-view { touch-action: pan-y; overflow-x: hidden; }
-.day-view.is-settling { transition: transform .16s ease; }
+/* Clipping belongs here rather than on the day view: a page lifted in perspective reaches past its
+   own box, and it is the page itself that has to be cut off, not its contents. `clip` and not
+   `hidden`, because `hidden` on one axis turns the other into a scroller, which would take the
+   sticky selection bar and the window's own scrolling down with it. */
+main { width: min(1440px, calc(100% - 48px)); margin: 0 auto; flex: 1; display: flex; flex-direction: column; overflow-x: clip; }
+/* The one place a whole-page swipe becomes a day change. `pan-y` leaves vertical scrolling to the
+   browser, the same technique a log row uses for its own swipe, while `pinch-zoom` keeps the zoom
+   that a bare `pan-y` would quietly take away over the whole page. The day view takes whatever
+   height is left over, so the empty space below a short log answers the swipe as well -- which is
+   where the gesture is most natural, being the one place no row can be mistaken for. */
+.day-view { flex: 1; touch-action: pan-y pinch-zoom; }
+/* Turning: the drag itself follows the finger with no transition to lag behind it, and only the
+   release is animated. Durations pair with the constants in `pageSwipe.ts`. */
+.day-view.is-leaving { opacity: 0; transition: transform .15s ease-in, opacity .15s ease-in; }
+.day-view.is-returning { transition: transform .2s ease-out; }
+@keyframes day-arrive-next { from { opacity: 0; transform: translateX(26px); } to { opacity: 1; transform: none; } }
+@keyframes day-arrive-previous { from { opacity: 0; transform: translateX(-26px); } to { opacity: 1; transform: none; } }
+.day-view.is-arriving-next { animation: day-arrive-next .19s ease-out; }
+.day-view.is-arriving-previous { animation: day-arrive-previous .19s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .day-view.is-arriving-next, .day-view.is-arriving-previous { animation: none; }
+  .day-view.is-leaving, .day-view.is-returning { transition: none; }
+}
 .date-header { position: relative; width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: center; margin: 18px auto 18px; padding: 0 76px; text-align: center; }
 .date-navigation { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 14px; }
 .date-title { position: relative; min-width: 0; display: grid; justify-items: center; gap: 2px; }

@@ -1590,6 +1590,8 @@ describe("page swipe navigation", () => {
   }
 
   const metricsGrid = () => screen.getByRole("region", { name: "Nutrition totals" });
+  /** The turning surface itself, which is what the empty space below a short log belongs to. */
+  const dayView = () => document.querySelector<HTMLElement>(".day-view")!;
 
   /** A drag reported the way a real finger does, in several small steps rather than one jump — a
       swipe that arrives in one report is exactly the shape that used to be misread as a scroll. */
@@ -1601,6 +1603,9 @@ describe("page swipe navigation", () => {
     }
     fireEvent.pointerUp(document, { pointerType, pointerId: 1, clientX: from + dx, clientY: 41 });
   }
+
+  /** The page leaves before the day changes, so "nothing happened" has to be given time to be wrong. */
+  const settled = () => act(() => new Promise<void>((resolve) => { setTimeout(resolve, 260); }));
 
   it("swipes left to the next day", async () => {
     installedApp();
@@ -1632,6 +1637,61 @@ describe("page swipe navigation", () => {
 
     swipe(metricsGrid(), -20);
 
+    await settled();
+    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+  });
+
+  it("answers a swipe on the empty space below the log", async () => {
+    installedApp();
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    swipe(dayView(), -100);
+
+    expect(await screen.findByText(displayDate(moveDate(SEEDED_DATE, 1)).title)).toBeTruthy();
+  });
+
+  it("lifts the page as the finger carries it, hinged on the edge it is heading for", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+    const view = dayView();
+
+    fireEvent.pointerDown(view, { pointerType: "touch", pointerId: 1, button: 0, clientX: 300, clientY: 40 });
+    for (const x of [292, 280, 264, 244]) {
+      fireEvent.pointerMove(document, { pointerType: "touch", pointerId: 1, clientX: x, clientY: 41 });
+    }
+
+    expect(view.className).toContain("is-dragging");
+    // Heading left, so the page hinges on the left and lifts its right edge towards the reader.
+    expect(view.style.transformOrigin).toBe("left center");
+    expect(view.style.transform).toMatch(/rotateY\(-\d/);
+
+    fireEvent.pointerUp(document, { pointerType: "touch", pointerId: 1, clientX: 244, clientY: 41 });
+    await settled();
+    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+  });
+
+  it("gives the page up when a second finger joins, so a pinch never turns it", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+    const view = dayView();
+
+    fireEvent.pointerDown(view, { pointerType: "touch", pointerId: 1, button: 0, clientX: 300, clientY: 40 });
+    for (const x of [292, 280, 264, 244]) {
+      fireEvent.pointerMove(document, { pointerType: "touch", pointerId: 1, clientX: x, clientY: 41 });
+    }
+    fireEvent.pointerDown(view, { pointerType: "touch", pointerId: 2, button: 0, clientX: 200, clientY: 120 });
+    for (const x of [200, 160, 120]) {
+      fireEvent.pointerMove(document, { pointerType: "touch", pointerId: 1, clientX: x, clientY: 41 });
+    }
+    fireEvent.pointerUp(document, { pointerType: "touch", pointerId: 1, clientX: 120, clientY: 41 });
+
+    await settled();
     expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
   });
 
@@ -1644,6 +1704,7 @@ describe("page swipe navigation", () => {
 
     swipe(row, -100);
 
+    await settled();
     expect(screen.getByRole("button", { name: "Copy…" })).toBeTruthy();
     expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
   });
@@ -1655,6 +1716,7 @@ describe("page swipe navigation", () => {
 
     swipe(metricsGrid(), -100);
 
+    await settled();
     expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
   });
 
@@ -1667,6 +1729,7 @@ describe("page swipe navigation", () => {
 
     swipe(metricsGrid(), -100);
 
+    await settled();
     expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
   });
 
@@ -1678,6 +1741,7 @@ describe("page swipe navigation", () => {
 
     swipe(metricsGrid(), -100, "mouse");
 
+    await settled();
     expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
   });
 
@@ -1690,6 +1754,7 @@ describe("page swipe navigation", () => {
     await screen.findByText("Drag entries into place");
 
     swipe(metricsGrid(), -100);
+    await settled();
     expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Next day" }));
