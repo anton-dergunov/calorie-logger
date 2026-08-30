@@ -1593,19 +1593,27 @@ describe("page swipe navigation", () => {
   /** The turning surface itself, which is what the empty space below a short log belongs to. */
   const dayView = () => document.querySelector<HTMLElement>(".day-view")!;
 
+  const flap = () => document.querySelector<HTMLElement>(".page-fold")!;
+  /** The flap is painted, so a fold is actually on screen. */
+  const folding = () => flap().style.display === "block";
+  /** A turn is under way. Set the moment one starts, before the first frame has been drawn — a turn
+      played rather than dragged begins at nothing and has no shape to show until it moves. */
+  const turning = () => flap().dataset.corner;
+
   /** A drag reported the way a real finger does, in several small steps rather than one jump — a
-      swipe that arrives in one report is exactly the shape that used to be misread as a scroll. */
-  function swipe(target: HTMLElement, dx: number, pointerType = "touch") {
-    const from = 300;
-    fireEvent.pointerDown(target, { pointerType, pointerId: 1, button: 0, clientX: from, clientY: 40 });
+      swipe that arrives in one report is exactly the shape that used to be misread as a scroll.
+      The press lands low on the page, where a page is usually taken hold of; jsdom's window is
+      768 tall, so a press up at the top would lift a top corner instead. */
+  function swipe(target: HTMLElement, dx: number, pointerType = "touch", from = { x: 300, y: 560 }) {
+    fireEvent.pointerDown(target, { pointerType, pointerId: 1, button: 0, clientX: from.x, clientY: from.y });
     for (let step = 1; step <= 6; step += 1) {
-      fireEvent.pointerMove(document, { pointerType, pointerId: 1, clientX: from + (dx * step) / 6, clientY: 41 });
+      fireEvent.pointerMove(document, { pointerType, pointerId: 1, clientX: from.x + (dx * step) / 6, clientY: from.y + 1 });
     }
-    fireEvent.pointerUp(document, { pointerType, pointerId: 1, clientX: from + dx, clientY: 41 });
+    fireEvent.pointerUp(document, { pointerType, pointerId: 1, clientX: from.x + dx, clientY: from.y + 1 });
   }
 
-  /** The page leaves before the day changes, so "nothing happened" has to be given time to be wrong. */
-  const settled = () => act(() => new Promise<void>((resolve) => { setTimeout(resolve, 260); }));
+  /** The page finishes turning before the day changes, so "nothing happened" needs time to be wrong. */
+  const settled = () => act(() => new Promise<void>((resolve) => { setTimeout(resolve, 700); }));
 
   it("swipes left to the next day", async () => {
     installedApp();
@@ -1615,7 +1623,7 @@ describe("page swipe navigation", () => {
 
     swipe(metricsGrid(), -100);
 
-    expect(await screen.findByText(displayDate(moveDate(SEEDED_DATE, 1)).title)).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, 1)).title })).toBeTruthy();
   });
 
   it("swipes right to the previous day", async () => {
@@ -1626,7 +1634,7 @@ describe("page swipe navigation", () => {
 
     swipe(metricsGrid(), 100);
 
-    expect(await screen.findByText(displayDate(moveDate(SEEDED_DATE, -1)).title)).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, -1)).title })).toBeTruthy();
   });
 
   it("snaps back without changing the day when the drag falls short", async () => {
@@ -1638,7 +1646,7 @@ describe("page swipe navigation", () => {
     swipe(metricsGrid(), -20);
 
     await settled();
-    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: displayDate(SEEDED_DATE).title })).toBeTruthy();
   });
 
   it("answers a swipe on the empty space below the log", async () => {
@@ -1649,49 +1657,183 @@ describe("page swipe navigation", () => {
 
     swipe(dayView(), -100);
 
-    expect(await screen.findByText(displayDate(moveDate(SEEDED_DATE, 1)).title)).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, 1)).title })).toBeTruthy();
   });
 
-  it("peels a bottom corner as the finger carries it, and leaves the day itself still", async () => {
+  /** Carries a finger partway and leaves it down, so the fold can be inspected mid-drag. The paper
+      trails the finger on its own frames, so the drag is given a few to catch up in. */
+  async function hold(from: { x: number; y: number }, dx: number) {
+    fireEvent.pointerDown(dayView(), { pointerType: "touch", pointerId: 1, button: 0, clientX: from.x, clientY: from.y });
+    for (let step = 1; step <= 4; step += 1) {
+      fireEvent.pointerMove(document, { pointerType: "touch", pointerId: 1, clientX: from.x + (dx * step) / 4, clientY: from.y + 1 });
+    }
+    await act(() => new Promise<void>((resolve) => { setTimeout(resolve, 120); }));
+  }
+
+  it("lifts the corner nearest the finger, and leaves the day itself still", async () => {
     installedApp();
     await day();
     render(<App />);
     await screen.findByRole("button", { name: "Add food to Breakfast" });
     const view = dayView();
 
-    fireEvent.pointerDown(view, { pointerType: "touch", pointerId: 1, button: 0, clientX: 300, clientY: 40 });
-    for (const x of [292, 280, 264, 244]) {
-      fireEvent.pointerMove(document, { pointerType: "touch", pointerId: 1, clientX: x, clientY: 41 });
-    }
+    await hold({ x: 300, y: 560 }, -90);
 
-    // Heading left is heading forward, so it is the right-hand corner that lifts, as in a book.
-    const fold = document.querySelector<HTMLElement>(".page-fold")!;
-    expect(fold.className).toContain("page-fold-right");
-    expect(parseFloat(fold.style.width)).toBeGreaterThan(0);
-    // Nothing page-sized moves: motion that large under the reader's eyes is what this replaced.
+    // Low on the page and heading forward, so the bottom right-hand corner lifts, as in a book.
+    expect(flap().dataset.corner).toBe("bottom-right");
+    expect(folding()).toBe(true);
+    expect(flap().style.clipPath.startsWith("polygon(")).toBe(true);
+    // The day itself is never masked or moved: motion that large is what this replaced.
     expect(view.style.transform).toBe("");
+    expect(view.style.clipPath).toBe("");
 
-    fireEvent.pointerUp(document, { pointerType: "touch", pointerId: 1, clientX: 244, clientY: 41 });
+    // Carried out and brought most of the way back, so the fold falls flat again and the day stays.
+    fireEvent.pointerUp(document, { pointerType: "touch", pointerId: 1, clientX: 260, clientY: 561 });
     await settled();
-    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
-    expect(document.querySelector(".page-fold")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: displayDate(SEEDED_DATE).title })).toBeTruthy();
+    expect(folding()).toBe(false);
   });
 
-  it("lifts the left corner when the swipe goes back", async () => {
+  it("lifts a top corner when the page is taken hold of near the top", async () => {
     installedApp();
     await day();
     render(<App />);
     await screen.findByRole("button", { name: "Add food to Breakfast" });
 
-    fireEvent.pointerDown(dayView(), { pointerType: "touch", pointerId: 1, button: 0, clientX: 100, clientY: 40 });
-    for (const x of [108, 120, 136, 156]) {
-      fireEvent.pointerMove(document, { pointerType: "touch", pointerId: 1, clientX: x, clientY: 41 });
-    }
+    await hold({ x: 300, y: 60 }, -90);
 
-    expect(document.querySelector(".page-fold")!.className).toContain("page-fold-left");
+    expect(flap().dataset.corner).toBe("top-right");
+  });
 
-    fireEvent.pointerUp(document, { pointerType: "touch", pointerId: 1, clientX: 156, clientY: 41 });
-    await settled();
+  it("lifts a left corner when the swipe goes back", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    await hold({ x: 120, y: 560 }, 90);
+
+    expect(flap().dataset.corner).toBe("bottom-left");
+  });
+
+  it("turns the page when a day arrow is pressed, without needing a finger", async () => {
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Next day" }));
+
+    expect(turning()).toBe("bottom-right");
+    // And it really is drawn, not merely begun.
+    await act(() => new Promise<void>((resolve) => { setTimeout(resolve, 60); }));
+    expect(folding()).toBe(true);
+    expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, 1)).title })).toBeTruthy();
+  });
+
+  it("turns the page for the menu bar too", async () => {
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    act(() => window.calorieLogger!.nextDay());
+
+    expect(turning()).toBe("bottom-right");
+    expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, 1)).title })).toBeTruthy();
+  });
+
+  it("keeps both days when one turn interrupts another", async () => {
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    // The second turn cuts the first short. The day the first one had promised is still owed, so it
+    // is paid on the way past rather than swallowed.
+    act(() => window.calorieLogger!.nextDay());
+    act(() => window.calorieLogger!.nextDay());
+
+    expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, 2)).title })).toBeTruthy();
+  });
+
+  it("names the day being turned to on the sheet coming up underneath", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    await hold({ x: 300, y: 560 }, -90);
+
+    // A turn covers the header long before the new day exists, and a page arriving blank reads as
+    // the app having lost its place.
+    const under = document.querySelector<HTMLElement>(".page-under")!;
+    expect(under.querySelector("h1")!.textContent).toBe(displayDate(moveDate(SEEDED_DATE, 1)).title);
+  });
+
+  it("carries the arriving day's own entries, which is what leaves nothing to blink", async () => {
+    installedApp();
+    await seed({
+      day: { date: SEEDED_DATE, entries: [entry("a", "Oats", "breakfast", 0)], totals: {} },
+      targets: NO_TARGETS, foods: []
+    });
+    // The day after, seeded alongside it: `seed` files entries by their own date.
+    await seed({
+      day: { date: SEEDED_DATE, entries: [
+        entry("a", "Oats", "breakfast", 0),
+        { ...entry("b", "Toast", "breakfast", 0), date: moveDate(SEEDED_DATE, 1) }
+      ], totals: {} },
+      targets: NO_TARGETS, foods: []
+    });
+    render(<App />);
+    await screen.findByText("Oats");
+
+    await hold({ x: 300, y: 560 }, -90);
+
+    const under = document.querySelector<HTMLElement>(".page-under")!;
+    expect(under.textContent).toContain("Toast");
+    expect(under.textContent).not.toContain("Oats");
+  });
+
+  it("keeps its identifiers to itself, so the live day stays the one being addressed", async () => {
+    installedApp();
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+
+    await hold({ x: 300, y: 560 }, -90);
+
+    // A second `data-drop-entry` would stand in front of the live row that focus looks up by it,
+    // and duplicate ids would take `aria-controls` with them.
+    const under = document.querySelector<HTMLElement>(".page-under")!;
+    expect(under.querySelectorAll("[id], [data-drop-entry]")).toHaveLength(0);
+    expect(under.hasAttribute("inert")).toBe(true);
+  });
+
+  it("shows the modes the arriving day will be in, so none of them appear at the handoff", async () => {
+    await day([entry("a", "Oats", "breakfast", 0)]);
+    render(<App />);
+    await screen.findByText("Oats");
+    fireEvent.click(screen.getByRole("button", { name: "Reorder" }));
+    await screen.findByText("Drag entries into place");
+
+    // Turning is allowed while reordering, so the copy has to be in that mode too: the bar and the
+    // rows it restyles would otherwise pop back in as the page landed.
+    fireEvent.click(screen.getByRole("button", { name: "Next day" }));
+    await act(() => new Promise<void>((resolve) => { setTimeout(resolve, 60); }));
+
+    const under = document.querySelector<HTMLElement>(".page-under")!;
+    expect(under.textContent).toContain("Drag entries into place");
+  });
+
+  it("changes the day without turning the page when motion is reduced", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Next day" }));
+
+    expect(turning()).toBeUndefined();
+    expect(folding()).toBe(false);
+    expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, 1)).title })).toBeTruthy();
   });
 
   it("gives the page up when a second finger joins, so a pinch never turns it", async () => {
@@ -1712,7 +1854,7 @@ describe("page swipe navigation", () => {
     fireEvent.pointerUp(document, { pointerType: "touch", pointerId: 1, clientX: 120, clientY: 41 });
 
     await settled();
-    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: displayDate(SEEDED_DATE).title })).toBeTruthy();
   });
 
   it("leaves a row's own swipe alone, and does not change the day", async () => {
@@ -1726,7 +1868,7 @@ describe("page swipe navigation", () => {
 
     await settled();
     expect(screen.getByRole("button", { name: "Copy…" })).toBeTruthy();
-    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: displayDate(SEEDED_DATE).title })).toBeTruthy();
   });
 
   it("does nothing in an ordinary browser tab", async () => {
@@ -1737,7 +1879,7 @@ describe("page swipe navigation", () => {
     swipe(metricsGrid(), -100);
 
     await settled();
-    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: displayDate(SEEDED_DATE).title })).toBeTruthy();
   });
 
   it("does nothing in the native macOS host, even though it counts as installed", async () => {
@@ -1750,7 +1892,7 @@ describe("page swipe navigation", () => {
     swipe(metricsGrid(), -100);
 
     await settled();
-    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: displayDate(SEEDED_DATE).title })).toBeTruthy();
   });
 
   it("does nothing for a mouse drag", async () => {
@@ -1762,7 +1904,7 @@ describe("page swipe navigation", () => {
     swipe(metricsGrid(), -100, "mouse");
 
     await settled();
-    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: displayDate(SEEDED_DATE).title })).toBeTruthy();
   });
 
   it("does nothing while reordering, and ordinary taps still work", async () => {
@@ -1775,10 +1917,10 @@ describe("page swipe navigation", () => {
 
     swipe(metricsGrid(), -100);
     await settled();
-    expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: displayDate(SEEDED_DATE).title })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Next day" }));
-    expect(await screen.findByText(displayDate(moveDate(SEEDED_DATE, 1)).title)).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, 1)).title })).toBeTruthy();
   });
 });
 

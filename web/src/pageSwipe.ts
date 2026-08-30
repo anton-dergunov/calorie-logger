@@ -1,16 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
+import {
+  clampReach, clipPath, cornerPoint, foldGeometry, fullTurnReach, gradientAngle, gradientOffset,
+  liftedCorner, type FoldCorner, type Point, type Rect, type Towards
+} from "./pageFold";
 
 /**
  * A second gesture on the same touch surface as `rowGestures.ts`, but arbitrating a different
  * press: not "what does a hold on this row mean" but "is this drag meant for the whole day".
  * A press that starts on a row is left entirely alone here, so the two never compete for it.
  *
- * The day is lifted by a bottom corner, the way a page in a book is: the right corner goes forward,
- * the left one back. Only that corner moves. A nudge of the whole page was too little to read as an
- * answer at all -- it looked like the browser's own pinch-zoom rubber-banding -- and turning the
- * whole page in perspective was too much, being a page-sized rotation under the reader's eyes every
- * time they changed day. The corner says the same thing without moving anything to say it.
+ * The day is turned by a corner, the way a page in a book is: the half of the page the finger lands
+ * in decides top or bottom, the way it travels decides forward or back, and the crease follows the
+ * finger from there. Two earlier attempts missed on either side of this. A few pixels of drift
+ * under the finger read as the browser's own pinch-zoom rubber-banding rather than as an answer;
+ * turning the whole day in perspective was a page-sized rotation under the reader's eyes every time
+ * they changed day, which was legible and faintly sickening. A corner is the part of a page that
+ * actually moves when you turn one.
  */
 
 /** Movement allowed before a direction is decided. Larger than a row's own tolerance: a misfired
@@ -21,72 +27,135 @@ const DEADZONE = 10;
     Higher than a row's bias because this gesture is contending with the whole log's own vertical
     scroll, not just one row's. */
 const DIRECTION_BIAS = 1.75;
-/** Raw finger travel needed on release to commit to a day change. A fixed distance, not a share
-    of the container's width, so the gesture feels the same on a phone and on a tablet. */
+/** Raw finger travel needed on release to commit to a day change. A fixed distance, not a share of
+    the page's width, so the gesture feels the same on a phone and on a tablet. Coupled to `REACH`:
+    at this distance the crease stands this far in from the corner, about a fifth of a phone. */
 const COMMIT_DISTANCE = 72;
-/** Pixels of corner peeled back per pixel dragged, and the largest fold a drag alone can raise. A
-    drag that has earned its day lifts a corner half the cap wide, which is a plain dog-ear well
-    before it is let go. */
-const FOLD_RATE = 1.5;
-const FOLD_MAX = 170;
-/** How far the corner carries on once the day is committed, as the page goes over. */
-const FOLD_AWAY = 190;
-/** Paired with the transitions and keyframes in `styles.css`. `LEAVE_MS` is also how long the day
-    itself waits to change, so the page being turned is the one being left. */
-const LEAVE_MS = 130;
-const RETURN_MS = 180;
-const ARRIVE_MS = 170;
+/** How much further than the finger the corner itself is carried. Two, exactly, and not a taste
+    knob: at two the crease's nearest point sits under the finger, so the crease travels with it one
+    for one. Anything less and sweeping the page would need a drag longer than the page. */
+const REACH = 2;
+/** How steeply the corner may be carried, as a share of its sideways travel. */
+const TILT = 0.7;
+/** Finishing a turn the finger has already carried most of the way, scaled down by the distance
+    still to cross so that the last tenth of a drag does not crawl. */
+const SWEEP_MS = 240;
+const SWEEP_FLOOR_MS = 90;
+/** A turn played rather than dragged has the whole page to cross and nothing to keep up with, so it
+    is slower on purpose -- the point of it is to be watched. */
+const PLAYED_MS = 400;
+const RETURN_MS = 190;
+/** How far the sheet below is carried past the crease, to keep the two edges from showing a seam. */
+const SEAM_OVERLAP = 0.5;
+/** How far behind the finger the paper trails. A first-order lag settles `TAU x velocity` behind, so
+    this is about 24px at a walking drag and would be a couple of hundred at a flick -- hence the
+    clamp, which keeps a fast drag coupled to the finger while a slow one still has some weight. */
+const FOLLOW_TAU_MS = 60;
+const MAX_LAG = 24;
+/** Near enough to the finger to stop asking for frames. Without it a finger held still spins rAF. */
+const CAUGHT_UP = 0.05;
 
 type Phase = "watching" | "dragging";
-type Towards = "next" | "previous";
 
 interface Pending {
   pointerId: number;
   phase: Phase;
   x: number;
   y: number;
+  /** Latched once the drag begins. Recomputed per move, a wobble across the start would teleport a
+      page-sized flap to the other side of the screen. */
+  corner: FoldCorner | undefined;
   towards: Towards | undefined;
+  /** Where the finger is, and where the paper has got to. Both are raw, unclamped travel: clamping
+      snaps sideways travel to zero as the finger crosses back, and easing a signal that jumps
+      traces a path the finger never took. */
+  target: Point;
+  drawn: Point;
 }
 
+/** A turn in progress. It says only which page is being turned and which way, because the shape it
+    has at any moment never goes through React. */
 export interface PageTurn {
-  /** How far the corner has been peeled back, in pixels along each edge it runs. */
-  fold: number;
-  /** The bottom corner the page is lifted by. The right one goes forward, as in a book. */
-  corner: "left" | "right";
+  corner: FoldCorner;
   towards: Towards;
-  stage: "dragging" | "leaving" | "arriving" | "returning";
 }
 
 export interface PageSwipeOptions {
-  /** False while installed-app/native-host/mode gating says this gesture should not react at all. */
+  /** False while installed-app/native-host/mode gating says the drag should not react at all. */
   enabled: boolean;
+  /** False only while there is no day to turn to. A button is not a swipe, so it is not held to the
+      same gate: a Mac has no finger to offer and should still get its page turned. */
+  canTurn: boolean;
   onPrevious(): void;
   onNext(): void;
 }
 
 export interface PageSwipe {
   containerProps: { onPointerDown(event: ReactPointerEvent): void };
-  /** Present only while the page is turning; absent at rest, so the resting DOM carries no inline
-      transform to fight the stylesheet. */
+  /** The sheet underneath and the lifted flap. Written to directly, so a turn costs no render. */
+  underRef: RefObject<HTMLDivElement | null>;
+  flapRef: RefObject<HTMLDivElement | null>;
   turn: PageTurn | undefined;
+  /** A button's or the menu bar's day change, played as the page turn a finger would have got. */
+  turnTo(towards: Towards): void;
 }
 
-/** The page going over on its own is the one part of this the preference is asking about, so the day
-    changes without it. The corner following the finger is direct manipulation and stays. */
+/** The page going over on its own is the part of this the preference is asking about, so the day
+    changes without it. A corner following a finger is direct manipulation and stays. */
 function reducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
 
-const cornerFor = (towards: Towards) => (towards === "next" ? "right" : "left");
+/** The page is the window. `clientWidth` is the honest answer where there is a scrollbar to leave
+    out, and `innerWidth` covers the case where there has been no layout to ask about. */
+function pageRect(): Rect {
+  const width = document.documentElement.clientWidth || window.innerWidth;
+  const height = document.documentElement.clientHeight || window.innerHeight;
+  return { left: 0, top: 0, right: width, bottom: height };
+}
 
-export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions): PageSwipe {
+const easeOut = (t: number) => 1 - (1 - t) * (1 - t) * (1 - t);
+
+export function usePageSwipe({ enabled, canTurn, onPrevious, onNext }: PageSwipeOptions): PageSwipe {
   const pending = useRef<Pending | null>(null);
   const detach = useRef<(() => void) | undefined>(undefined);
-  const timer = useRef<number | undefined>(undefined);
-  /** True only while the leaving page is still on screen, when the day it belongs to has not
-      changed yet and a second gesture would lose it. */
-  const leaving = useRef(false);
+  const frame = useRef<number | undefined>(undefined);
+  /** The day change a sweep has promised but not yet made. Dropping it would lose the day. */
+  const pendingStep = useRef<(() => void) | undefined>(undefined);
+  const underRef = useRef<HTMLDivElement | null>(null);
+  const flapRef = useRef<HTMLDivElement | null>(null);
   const [turn, setTurn] = useState<PageTurn | undefined>(undefined);
+
+  /** Draws one frame of the fold straight onto the two sheets, without troubling React. */
+  const paint = useCallback((corner: FoldCorner, delta: Point) => {
+    const under = underRef.current;
+    const flap = flapRef.current;
+    if (!under || !flap) return;
+    const page = pageRect();
+    const from = cornerPoint(page, corner);
+    const carried = clampReach(corner, delta, TILT);
+    const fold = foldGeometry(page, corner, {
+      x: from.x + carried.x * REACH, y: from.y + carried.y * REACH
+    }, SEAM_OVERLAP);
+    if (!fold) { under.style.display = "none"; flap.style.display = "none"; return; }
+
+    const { normal, at } = fold.crease;
+    const beneath = clipPath(fold.under);
+    under.style.display = beneath ? "block" : "none";
+    under.style.clipPath = beneath;
+
+    const box = { width: page.right, height: page.bottom };
+    const angle = gradientAngle(normal);
+    const tip = fold.flap.reduce((far, p) => Math.max(far, gradientOffset(box, angle, p)), 0);
+    const path = clipPath(fold.flap);
+    flap.style.display = path ? "block" : "none";
+    flap.style.clipPath = path;
+    flap.style.setProperty("--fold-angle", `${angle.toFixed(2)}deg`);
+    flap.style.setProperty("--fold-crease", `${gradientOffset(box, angle, at).toFixed(2)}px`);
+    flap.style.setProperty("--fold-tip", `${tip.toFixed(2)}px`);
+    flap.style.setProperty("--fold-shadow-x", `${(-normal.x * 8).toFixed(2)}px`);
+    flap.style.setProperty("--fold-shadow-y", `${(-normal.y * 8).toFixed(2)}px`);
+  }, []);
 
   const release = useCallback(() => {
     pending.current = null;
@@ -96,38 +165,114 @@ export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions):
 
   const rest = useCallback(() => {
     release();
-    if (timer.current) window.clearTimeout(timer.current);
-    timer.current = undefined;
-    leaving.current = false;
+    if (frame.current) cancelAnimationFrame(frame.current);
+    frame.current = undefined;
+    // A turn stood down half way still owed a day. Pay it rather than swallow it.
+    const owed = pendingStep.current;
+    pendingStep.current = undefined;
+    if (underRef.current) underRef.current.style.display = "none";
+    if (flapRef.current) flapRef.current.style.display = "none";
     setTurn(undefined);
+    owed?.();
   }, [release]);
 
   useEffect(() => rest, [rest]);
   // Anything that stands the gesture down mid-turn -- a mode change, a modal opening -- puts the
   // page back rather than leaving it lifted with no finger on it.
-  useEffect(() => { if (!enabled) rest(); }, [enabled, rest]);
+  useEffect(() => { if (!enabled && !canTurn) rest(); }, [enabled, canTurn, rest]);
+  // Insurance, and one-directional on purpose: this may hide the sheets but must never show them,
+  // or it would race the tween that owns `display` while a turn is running.
+  useLayoutEffect(() => {
+    if (turn) return;
+    if (underRef.current) underRef.current.style.display = "none";
+    if (flapRef.current) flapRef.current.style.display = "none";
+  }, [turn]);
 
-  const settleBack = useCallback((towards: Towards) => {
-    release();
-    setTurn({ fold: 0, corner: cornerFor(towards), towards, stage: "returning" });
-    if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => { timer.current = undefined; setTurn(undefined); }, RETURN_MS);
-  }, [release]);
+  /**
+   * The paper trailing the finger.
+   *
+   * The drawing lags; the decision does not. What is painted eases towards where the finger is,
+   * while the commit is judged on the finger's own travel, so the page has some weight without the
+   * gesture becoming harder to aim. Painting here rather than in the pointer handler also folds
+   * several reports in one frame into a single paint, which a 120Hz screen delivers a lot of.
+   */
+  const follow = useCallback((corner: FoldCorner) => {
+    if (frame.current) return;
+    let last = performance.now();
+    const step = () => {
+      frame.current = undefined;
+      const current = pending.current;
+      if (!current || current.phase !== "dragging") return;
+      const now = performance.now();
+      const caught = 1 - Math.exp(-(now - last) / FOLLOW_TAU_MS);
+      last = now;
+      const target = current.target;
+      const drawn = current.drawn;
+      let x = drawn.x + (target.x - drawn.x) * caught;
+      let y = drawn.y + (target.y - drawn.y) * caught;
+      // A flick outruns any lag worth having, so the paper is never allowed to fall further behind
+      // than this -- the crease is meant to sit under the finger, and far behind it reads as broken.
+      if (Math.abs(target.x - x) > MAX_LAG) x = target.x - Math.sign(target.x - x) * MAX_LAG;
+      if (Math.abs(target.y - y) > MAX_LAG) y = target.y - Math.sign(target.y - y) * MAX_LAG;
+      current.drawn = { x, y };
+      paint(corner, current.drawn);
+      if (Math.hypot(target.x - x, target.y - y) < CAUGHT_UP) return;
+      frame.current = requestAnimationFrame(step);
+    };
+    frame.current = requestAnimationFrame(step);
+  }, [paint]);
 
-  const commit = useCallback((towards: Towards) => {
+  const animate = useCallback((corner: FoldCorner, from: Point, to: Point, ms: number, done: () => void) => {
+    if (frame.current) cancelAnimationFrame(frame.current);
+    const started = performance.now();
+    const step = () => {
+      const t = Math.min(1, (performance.now() - started) / ms);
+      const eased = easeOut(t);
+      paint(corner, { x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased });
+      if (t < 1) { frame.current = requestAnimationFrame(step); return; }
+      frame.current = undefined;
+      done();
+    };
+    frame.current = requestAnimationFrame(step);
+  }, [paint]);
+
+  const settleBack = useCallback((corner: FoldCorner, towards: Towards, from: Point) => {
     release();
+    animate(corner, from, { x: 0, y: 0 }, RETURN_MS, rest);
+  }, [release, animate, rest]);
+
+  /**
+   * Carries the corner the rest of the way over, and hands the day across underneath it.
+   *
+   * The day changes on the last frame, when the sheet below already covers the window and is
+   * already showing the day being arrived at. There is nothing to fade, because there is no frame
+   * where the screen shows anything the arriving page does not.
+   */
+  const sweep = useCallback((corner: FoldCorner, towards: Towards, from: Point, ms: number) => {
     const step = towards === "next" ? onNext : onPrevious;
-    if (reducedMotion()) { setTurn(undefined); step(); return; }
-    leaving.current = true;
-    setTurn({ fold: FOLD_AWAY, corner: cornerFor(towards), towards, stage: "leaving" });
-    if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
-      leaving.current = false;
+    if (reducedMotion()) { rest(); step(); return; }
+    const page = pageRect();
+    const to = fullTurnReach(page, corner, TILT);
+    const travelled = Math.min(1, Math.abs(from.x) / Math.max(1, Math.abs(to.x)));
+    pendingStep.current = step;
+    setTurn({ corner, towards });
+    animate(corner, from, to, Math.max(SWEEP_FLOOR_MS, ms * (1 - travelled)), () => {
+      pendingStep.current = undefined;
       step();
-      setTurn({ fold: 0, corner: cornerFor(towards), towards, stage: "arriving" });
-      timer.current = window.setTimeout(() => { timer.current = undefined; setTurn(undefined); }, ARRIVE_MS);
-    }, LEAVE_MS);
-  }, [release, onNext, onPrevious]);
+      setTurn(undefined);
+    });
+  }, [onNext, onPrevious, rest, animate]);
+
+  const turnTo = useCallback((towards: Towards) => {
+    if (!canTurn) return;
+    // A turn already running is finished off rather than queued behind: holding the menu-bar
+    // shortcut should step the day, not build a backlog of animations.
+    if (pending.current || frame.current) rest();
+    const page = pageRect();
+    const corner = liftedCorner(page, { x: page.right / 2, y: page.bottom * 0.72 }, towards);
+    setTurn({ corner, towards });
+    sweep(corner, towards, { x: 0, y: 0 }, PLAYED_MS);
+  }, [canTurn, rest, sweep]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent) => {
     if (!enabled || event.pointerType === "mouse") return;
@@ -135,16 +280,22 @@ export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions):
     // A second finger is a pinch, and a pinch spreads sideways: read as a drag it would turn the
     // page while the owner was only trying to zoom.
     if (pending.current) {
-      if (pending.current.phase === "dragging" && pending.current.towards) settleBack(pending.current.towards);
-      else release();
+      const held = pending.current;
+      if (held.phase === "dragging" && held.corner && held.towards) {
+        settleBack(held.corner, held.towards, { x: event.clientX - held.x, y: event.clientY - held.y });
+      } else release();
       return;
     }
-    if (leaving.current) return;
-    // An arrival still settling is cut short rather than left to clear itself out from under the
-    // gesture that is starting now.
-    if (timer.current) rest();
+    if (pendingStep.current) return;
+    // A turn still settling is cut short rather than left to clear itself out from under the
+    // gesture starting now.
+    if (frame.current) rest();
 
-    const start: Pending = { pointerId: event.pointerId, phase: "watching", x: event.clientX, y: event.clientY, towards: undefined };
+    const start: Pending = {
+      pointerId: event.pointerId, phase: "watching",
+      x: event.clientX, y: event.clientY, corner: undefined, towards: undefined,
+      target: { x: 0, y: 0 }, drawn: { x: 0, y: 0 }
+    };
     pending.current = start;
 
     const move = (moveEvent: PointerEvent) => {
@@ -156,22 +307,28 @@ export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions):
         if (Math.abs(dx) <= DEADZONE && Math.abs(dy) <= DEADZONE) return;
         if (Math.abs(dx) <= Math.abs(dy) * DIRECTION_BIAS) { release(); return; }
         current.phase = "dragging";
+        current.towards = dx < 0 ? "next" : "previous";
+        current.corner = liftedCorner(pageRect(), { x: current.x, y: current.y }, current.towards);
+        setTurn({ corner: current.corner, towards: current.towards });
       }
       moveEvent.preventDefault();
-      current.towards = dx < 0 ? "next" : "previous";
-      setTurn({
-        fold: Math.min(FOLD_MAX, Math.abs(dx) * FOLD_RATE),
-        corner: cornerFor(current.towards), towards: current.towards, stage: "dragging"
-      });
+      current.target = { x: dx, y: dy };
+      if (current.corner) follow(current.corner);
     };
     const up = (upEvent: PointerEvent) => {
       const current = pending.current;
       if (!current || upEvent.pointerId !== current.pointerId) return;
-      if (current.phase !== "dragging") { release(); return; }
-      const dx = upEvent.clientX - current.x;
-      if (dx <= -COMMIT_DISTANCE) commit("next");
-      else if (dx >= COMMIT_DISTANCE) commit("previous");
-      else settleBack(current.towards ?? "next");
+      if (current.phase !== "dragging" || !current.corner || !current.towards) { release(); return; }
+      const corner = current.corner;
+      const towards = current.towards;
+      // What the finger did decides; where the paper had got to is where the rest of the turn
+      // starts from, so it carries on from where it was rather than jumping to catch up.
+      const delta = { x: upEvent.clientX - current.x, y: upEvent.clientY - current.y };
+      const from = clampReach(corner, current.drawn, TILT);
+      release();
+      if (Math.abs(delta.x) >= COMMIT_DISTANCE && (delta.x < 0) === (towards === "next")) {
+        sweep(corner, towards, from, SWEEP_MS);
+      } else settleBack(corner, towards, from);
     };
     document.addEventListener("pointermove", move, { passive: false });
     document.addEventListener("pointerup", up);
@@ -181,7 +338,7 @@ export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions):
       document.removeEventListener("pointerup", up);
       document.removeEventListener("pointercancel", up);
     };
-  }, [enabled, release, rest, settleBack, commit]);
+  }, [enabled, release, rest, paint, settleBack, sweep]);
 
-  return { containerProps: { onPointerDown }, turn };
+  return { containerProps: { onPointerDown }, underRef, flapRef, turn, turnTo };
 }

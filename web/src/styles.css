@@ -17,7 +17,17 @@
 /* The installed app must not reload itself. Chrome's pull-to-refresh fires on any downward
    overscroll, which threw away an open dialog and everything typed into it. */
 html, body { overscroll-behavior-y: none; }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 14% -8%, #fffdf7 0, transparent 34rem), #f4f2eb; }
+/* Held stable so a turn between a long day and a short one does not take the scrollbar away and
+   shift the centred page sideways underneath the fold. */
+html { scrollbar-gutter: stable; }
+/* One declaration, used by the page and by the sheet that comes up under a turning page. It is
+   anchored to the window rather than the document on purpose: resolved against the document the
+   circle lands somewhere else on a fixed layer, and the two would disagree the moment the log is
+   long enough to scroll -- which is a whole-window change of tint at the handoff. */
+:root { --page-background: radial-gradient(circle at 14% -3rem, #fffdf7 0, transparent 34rem), #f4f2eb; }
+/* `background-attachment` on its own line, not the `fixed` keyword in the shorthand: in a layered
+   shorthand that keyword reaches only the last layer, which would leave the gradient scrolling. */
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--page-background); background-attachment: fixed; }
 button, input, select { font: inherit; }
 button { color: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #557761; outline-offset: 2px; }
@@ -44,24 +54,31 @@ main { width: min(1440px, calc(100% - 48px)); margin: 0 auto; flex: 1; display: 
    height is left over, so the empty space below a short log answers the swipe as well -- which is
    where the gesture is most natural, being the one place no row can be mistaken for. */
 .day-view { flex: 1; touch-action: pan-y pinch-zoom; }
-/* The day is exchanged under the lifted corner rather than moved: it only fades, so nothing
-   page-sized travels across the reader's eyes. Durations pair with the constants in `pageSwipe.ts`. */
-.day-view.is-leaving { opacity: 0; transition: opacity .13s ease-in; }
-@keyframes day-arrive { from { opacity: 0; } to { opacity: 1; } }
-.day-view.is-arriving { animation: day-arrive .17s ease-out; }
-/* The corner being lifted, as a dog-ear: a triangle of the page's own reverse, shaded from the
-   crease down to the tip, casting its shadow back onto the page it is being peeled off. Fixed to
-   the viewport corner so it stays under the thumb wherever the log has been scrolled to. */
-.page-fold { position: fixed; z-index: 15; bottom: 0; pointer-events: none; }
-/* The crease falls at exactly half the length of a 135deg gradient over a square, so the flap can
-   start hard against it: dark where it folds under, brightening to the raised tip. */
-.page-fold-right { right: 0; clip-path: polygon(100% 0, 100% 100%, 0 100%); background: linear-gradient(135deg, #b9b6a6 50%, #dedbcd 56%, #f6f4ec 78%, #fffefa 100%); filter: drop-shadow(-4px -4px 9px rgba(37,38,33,.34)); }
-.page-fold-left { left: 0; clip-path: polygon(0 0, 100% 100%, 0 100%); background: linear-gradient(225deg, #b9b6a6 50%, #dedbcd 56%, #f6f4ec 78%, #fffefa 100%); filter: drop-shadow(4px -4px 9px rgba(37,38,33,.34)); }
-.page-fold.is-leaving { opacity: 0; transition: width .13s ease-in, height .13s ease-in, opacity .13s ease-in; }
-.page-fold.is-returning { transition: width .18s ease-out, height .18s ease-out; }
-@media (prefers-reduced-motion: reduce) {
-  .day-view.is-arriving { animation: none; }
-  .day-view.is-leaving, .page-fold.is-leaving, .page-fold.is-returning { transition: none; }
+/* A page being turned by one corner: the sheet coming up underneath, and the corner lifted off it.
+   Both cover the window and are shaped entirely by the clip paths the gesture writes onto them, so
+   the day itself is never masked, moved, or repainted while a turn is running. Promoted while
+   turning, because the sheet below now carries a whole day's worth of text and re-rasterising it
+   through a changing mask every frame is the one thing here that could cost the gesture its
+   smoothness. */
+.page-under, .page-fold { position: fixed; inset: 0; z-index: 45; display: none; pointer-events: none; will-change: clip-path; }
+/* The same paper the page is on, so that at the handoff -- when this sheet covers the window
+   entirely and is showing the day about to be rendered -- there is nothing left to tell apart. */
+.page-under { background: var(--page-background); }
+/* The day on the sheet is laid where the live one is: the window is wider than the page, and a
+   banner can push it down, so the gesture measures it rather than guessing. */
+.page-under-content { position: absolute; }
+/* The crease is a ridge catching the light, and the paper falls away from it -- the reverse of a
+   dog-ear, which is shaded darkest where it folds under. `--fold-crease` is measured rather than
+   guessed: a gradient starts at a corner of its box, not at the crease, so a stop written in plain
+   pixels would slide off the fold as the angle turned. */
+.page-fold {
+  background: linear-gradient(var(--fold-angle, 0deg),
+    #b0ad9d calc(var(--fold-crease, 0px) - 1px),
+    #fffefa calc(var(--fold-crease, 0px) + 1px),
+    #efece1 calc(var(--fold-crease, 0px) + 10px),
+    #f8f6ee calc(var(--fold-crease, 0px) + 46px),
+    #fdfcf7 var(--fold-tip, 100%));
+  filter: drop-shadow(var(--fold-shadow-x, 0px) var(--fold-shadow-y, 0px) 14px rgba(37,38,33,.28));
 }
 .date-header { position: relative; width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: center; margin: 18px auto 18px; padding: 0 76px; text-align: center; }
 .date-navigation { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 14px; }

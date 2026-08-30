@@ -1,4 +1,5 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
 import FoodCamera from "./FoodCamera";
 import { cameraAvailable } from "./barcodeDetection";
 import { currentLogDate, displayDate, moveDate } from "./date";
@@ -20,7 +21,8 @@ import { SyncChip, SyncPanel } from "./SyncStatus";
 import { syncEngine } from "./sync";
 import { observeViewport } from "./viewport";
 import type { StoredSession } from "./session";
-import type { ContributionLevel, EntryPlacement, ExternalFoodResult, ExternalFoodSearchResponse, ExternalFoodSource, Food, FoodContribution, FoodEstimate, FoodInput, FoodUnit, LogEntry, Meal, Nutrition, Targets } from "./types";
+import type { ContributionLevel, DayData, EntryPlacement, ExternalFoodResult, ExternalFoodSearchResponse, ExternalFoodSource, Food, FoodContribution, FoodEstimate, FoodInput, FoodUnit, LogEntry, Meal, Nutrition, Targets } from "./types";
+import type { SyncStatus } from "./sync";
 import { emptyNutrition, foodContributions, scaledNutrition } from "./types";
 
 const pictureCredits = pictureCreditsData as { source: string; url: string; authors: string[] };
@@ -1175,6 +1177,209 @@ function MealTotals({ totals }: { totals: Nutrition }) {
 
 type DropTarget = { meal: Meal; entryId?: string; position: "before" | "after" | "end" };
 
+/**
+ * Everything the day answers a press with. Absent for the copy laid under a turning page, which
+ * answers nothing: the split is not "which mode is it in" but "does it respond to input at all".
+ * Anything that decides a pixel is plain data, so the two copies can be told apart by behaviour and
+ * never by appearance.
+ */
+interface DayViewLive {
+  containerProps: { onPointerDown(event: ReactPointerEvent): void };
+  gestures: ReturnType<typeof useRowGestures>;
+  finePointer: boolean;
+  dropTargetRef: RefObject<DropTarget | undefined>;
+  goToToday(): void;
+  turnTo(towards: "next" | "previous"): void;
+  openModal(modal: "sync" | "settings" | "targets"): void;
+  addFood(meal: Meal): void;
+  repeatMeal(meal: Meal): void;
+  toggleMeal(meal: Meal): void;
+  edit(entry: LogEntry): void;
+  confirmEntry(entry: LogEntry): void;
+  toggleSelected(id: string): void;
+  setMealSelected(meal: Meal, chosen: boolean): void;
+  toggleAllSelected(): void;
+  startSelecting(): void;
+  endSelecting(): void;
+  startReordering(): void;
+  endReordering(): void;
+  setConfirmingDelete(confirming: boolean): void;
+  deleteSelected(): void;
+  transfer(ids: string[], mode: TransferMode): void;
+  setDropTarget(target: DropTarget | undefined): void;
+  finishDrag(id: string, target?: DropTarget): void;
+  setDragging(id: string | undefined): void;
+  moveByKeyboard(id: string, direction: 1 | -1): void;
+}
+
+interface DayViewProps {
+  date: string;
+  menuDate: string;
+  day: DayData;
+  targets: Targets;
+  contributions: Map<string, FoodContribution>;
+  collapsedMeals: Set<Meal>;
+  syncStatus: SyncStatus;
+  update: UpdateStage | undefined;
+  selecting: boolean;
+  reordering: boolean;
+  loading: boolean;
+  selected: Set<string>;
+  confirmingDelete: boolean;
+  dragging: string | undefined;
+  dropTarget: DropTarget | undefined;
+  entryMenuId: string | undefined;
+  live?: DayViewLive;
+}
+
+const NOTHING_SELECTED: Set<string> = new Set();
+
+function DayView({
+  date, menuDate, day, targets, contributions, collapsedMeals, syncStatus, update,
+  selecting, reordering, loading, selected, confirmingDelete, dragging, dropTarget, entryMenuId, live
+}: DayViewProps) {
+  // The copy carries no identifiers. None of them decide a pixel, and a second `data-drop-entry`
+  // would stand in front of the live row that `focus` looks up by exactly that selector.
+  const named = <T,>(value: T) => (live ? value : undefined);
+  const gestures = live?.gestures;
+
+  return <>
+    <section className="date-header">
+      {date !== menuDate && <button className="today-button" onClick={() => live?.goToToday()} aria-label="Go to today" title="Go to today"><HomeIcon /></button>}
+      <div className="date-navigation">
+        <button className="date-arrow" onClick={() => live?.turnTo("previous")} aria-label="Previous day"><ChevronIcon direction="left" /></button>
+        <div className="date-title"><h1>{displayDate(date).title}</h1><span className="date-weekday">{displayDate(date).eyebrow}</span></div>
+        <button className="date-arrow" onClick={() => live?.turnTo("next")} aria-label="Next day"><ChevronIcon direction="right" /></button>
+      </div>
+      <div className="header-actions">
+        <SyncChip status={syncStatus} onOpen={() => live?.openModal("sync")} />
+        {/* The native host keeps its commands in the menu bar, where a Mac application keeps
+            them, so a second door into the same rooms would only be a way to disagree. */}
+        {!isNativeHost() && <button
+          className={`settings-button ${update === "ready" ? "has-update" : ""}`}
+          onClick={() => live?.openModal("settings")}
+          aria-label={update === "ready" ? "Open settings; an update is ready" : "Open settings"}
+        ><SettingsIcon /></button>}
+      </div>
+    </section>
+
+    <section className="metrics-grid" aria-label="Nutrition totals">
+      <MetricCard label="Energy" value={day.totals.calories} target={targets.calories} kind="calories" onOpenTargets={() => live?.openModal("targets")} />
+      <MetricCard label="Protein" value={day.totals.protein} target={targets.protein} kind="protein" onOpenTargets={() => live?.openModal("targets")} />
+      <MetricCard label="Fat" value={day.totals.fat} target={targets.fat} kind="fat" onOpenTargets={() => live?.openModal("targets")} />
+      <MetricCard label="Carbs" value={day.totals.carbs} target={targets.carbs} kind="carbs" onOpenTargets={() => live?.openModal("targets")} />
+    </section>
+
+    <section className="log-section">
+      {reordering && <div className="mode-bar">
+        <strong>Drag entries into place</strong>
+        <span className="visually-hidden">With an entry focused, the up and down arrow keys move it between positions and meals.</span>
+        <button onClick={() => live?.endReordering()}>Done</button>
+      </div>}
+      {selecting && <div className={`selection-bar ${confirmingDelete ? "confirm-delete" : ""}`}>
+        {confirmingDelete ? <><strong>Delete {selected.size} selected entr{selected.size === 1 ? "y" : "ies"}?</strong><span /><button onClick={() => live?.setConfirmingDelete(false)}>Cancel</button><button className="danger-action" onClick={() => live?.deleteSelected()}>Delete</button></> : <>
+          <strong>{selected.size ? `${selected.size} selected` : "Tap entries to select"}</strong>
+          <span />
+          <button onClick={() => live?.toggleAllSelected()}>{selected.size === day.entries.length ? "Clear" : "Select all"}</button>
+          {selected.size > 0 && <><button onClick={() => live?.transfer([...selected], "copy")}>Copy…</button><button className="danger-text" onClick={() => live?.setConfirmingDelete(true)}>Delete</button></>}
+          <button onClick={() => live?.endSelecting()}>Done</button>
+        </>}
+      </div>}
+      {/* Where there is room for them, the two modes are on the page rather than behind a menu.
+          Narrower screens reach them from Settings, which the matching media query hides here. */}
+      {!loading && <div className="log-tools">
+        <button disabled={!day.entries.length || selecting} onClick={() => live?.startSelecting()}>Select</button>
+        <button disabled={!day.entries.length || reordering} onClick={() => live?.startReordering()}>Reorder</button>
+      </div>}
+      {loading ? <div className="empty-state"><p>Opening today’s page…</p></div> : <div className={`meal-log ${dragging ? "is-dragging" : ""}`} role="table" aria-label="Food log by meal">
+        <div className="food-table-header" role="row">
+          {selecting && <span className="check-cell" aria-hidden="true" />}
+          <span className="food-table-header-main">
+            <span>Food</span>
+            {LOG_COLUMNS.map((column) => <span key={column.long}><span className="column-long">{column.long}</span><span className="column-short">{column.short}</span></span>)}
+          </span>
+        </div>
+        {MEALS.map((meal) => {
+          const entries = day.entries.filter((entry) => entry.meal === meal.id);
+          const mealNutrition = totalNutrition(entries);
+          const collapsed = collapsedMeals.has(meal.id);
+          return <section className="meal-section" key={meal.id} aria-labelledby={named(`meal-${meal.id}`)}>
+            <header className="meal-heading" data-meal-drop data-meal={meal.id} onDragOver={(event) => { if (!live) return; event.preventDefault(); const next: DropTarget = { meal: meal.id, position: "end" }; live.dropTargetRef.current = next; live.setDropTarget(next); }} onDrop={(event) => { if (!live) return; event.preventDefault(); live.finishDrag(event.dataTransfer.getData("text/plain") || dragging || "", live.dropTargetRef.current); }}>
+              {selecting && <label className="check-cell" onClick={(event) => event.stopPropagation()}><input
+                type="checkbox"
+                checked={entries.length > 0 && entries.every((item) => selected.has(item.id))}
+                ref={(node) => { if (node) node.indeterminate = entries.some((item) => selected.has(item.id)) && !entries.every((item) => selected.has(item.id)); }}
+                disabled={!entries.length}
+                onChange={(event) => live?.setMealSelected(meal.id, event.target.checked)}
+                aria-label={`Select all ${meal.label}`}
+              /></label>}
+              <div className="meal-heading-main">
+              <div className="meal-primary">
+                <h3 id={named(`meal-${meal.id}`)}><button className="meal-toggle" onClick={() => live?.toggleMeal(meal.id)} aria-expanded={!collapsed} aria-controls={named(`meal-entries-${meal.id}`)} title={`${collapsed ? "Expand" : "Collapse"} ${meal.label}`}><span className="meal-chevron"><MealChevronIcon expanded={!collapsed} /></span><span>{meal.label}</span></button></h3>
+                <div className="meal-actions"><button className="meal-repeat" onClick={() => live?.repeatMeal(meal.id)} aria-label={`Repeat yesterday's ${meal.label}`} title={`Repeat yesterday's ${meal.label}`}><RepeatIcon /></button><button className="meal-add" onClick={() => live?.addFood(meal.id)} aria-label={`Add food to ${meal.label}`} title={`Add food to ${meal.label}`}><PlusIcon /></button></div>
+              </div>
+              <MealTotals totals={mealNutrition} />
+              </div>
+            </header>
+            <div id={named(`meal-entries-${meal.id}`)} hidden={collapsed} className={`meal-entries ${dropTarget?.meal === meal.id && dropTarget.position === "end" ? "drop-at-end" : ""}`}>
+              {entries.map((entry) => {
+                const indicator = dropTarget?.entryId === entry.id ? `drop-${dropTarget.position}` : "";
+                const contribution = contributions.get(entry.foodId);
+                const rowGestures = gestures?.rowProps(entry.id);
+                const revealed = gestures?.revealed === entry.id;
+                const slid = gestures?.sliding?.id === entry.id ? gestures.sliding.offset : revealed ? -ROW_ACTIONS_WIDTH : 0;
+                return <div className={`food-row ${selecting ? "is-selecting" : ""} ${reordering ? "is-reordering" : ""} ${selected.has(entry.id) ? "is-selected" : ""} ${dragging === entry.id ? "is-dragged" : ""} ${slid ? "is-slid" : ""} ${gestures?.sliding?.id === entry.id ? "is-sliding" : ""} ${entryMenuId === entry.id ? "is-menu-target" : ""} ${indicator}`} role="row" key={entry.id} data-drop-entry={named(entry.id)} data-meal={meal.id} draggable={reordering || (live?.finePointer ?? false)}
+                  onDragStart={(event) => { if (!live || selecting) return; live.startReordering(); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", entry.id); live.setDragging(entry.id); }}
+                  onDragEnd={() => reordering && live?.finishDrag(entry.id)}
+                  onPointerDown={(event) => {
+                    if (!live) return;
+                    if (reordering && event.pointerType !== "mouse") { event.preventDefault(); live.setDragging(entry.id); return; }
+                    rowGestures?.onPointerDown(event);
+                  }}
+                  onContextMenu={rowGestures?.onContextMenu}
+                  onDragOver={(event) => {
+                    if (!live || !reordering) return;
+                    event.preventDefault();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const pointerY = Number.isFinite(event.clientY) ? event.clientY : rect.top;
+                    const next: DropTarget = { meal: meal.id, entryId: entry.id, position: pointerY < rect.top + rect.height / 2 ? "before" : "after" };
+                    live.dropTargetRef.current = next; live.setDropTarget(next);
+                  }}
+                  onDrop={(event) => { if (!live) return; event.preventDefault(); live.finishDrag(event.dataTransfer.getData("text/plain") || dragging || "", live.dropTargetRef.current); }}>
+                  {selecting && <label className="check-cell" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected.has(entry.id)} onChange={() => live?.toggleSelected(entry.id)} aria-label={`Select ${entry.name}`} /></label>}
+                  {(revealed || gestures?.sliding?.id === entry.id) && <div className="row-actions" style={{ transform: `translateX(${ROW_ACTIONS_WIDTH + slid}px)` }}>
+                    <button className="row-action" onClick={() => live?.transfer([entry.id], "copy")}>Copy…</button>
+                    <button className="row-action is-danger" onClick={() => live?.confirmEntry(entry)}>Delete</button>
+                  </div>}
+                  <button className="food-entry-main"
+                    onClick={() => {
+                      if (!live || gestures?.claimedClick()) return;
+                      if (selecting) live.toggleSelected(entry.id);
+                      else if (revealed) gestures?.closeReveal();
+                      else if (!reordering) live.edit(entry);
+                    }}
+                    onKeyDown={(event) => {
+                      if (!live || !reordering || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+                      event.preventDefault();
+                      live.moveByKeyboard(entry.id, event.key === "ArrowDown" ? 1 : -1);
+                    }}
+                    aria-label={`${selecting ? `Select ${entry.name}` : reordering ? `Reorder ${entry.name}` : `Edit ${entry.name}`}${shareLabel(contribution)}`}>
+                    <span className="food-name-cell"><FoodVisual value={entry.icon} className="food-icon" label={entry.name} /><span className="food-name-text">{entry.name}</span></span>
+                    <span>{fmt(entry.amount)}</span><span>{fmt(entry.protein)}</span>
+                    <MacroCell value={entry.fat} macro="fat" name={entry.name} contribution={contribution} />
+                    <MacroCell value={entry.carbs} macro="carbs" name={entry.name} contribution={contribution} />
+                    <span className="energy-cell">{fmt(entry.calories, true)}</span>
+                  </button>
+                </div>;
+              })}
+            </div>
+          </section>;
+        })}
+      </div>}
+    </section>
+  </>;
+}
+
 export default function App() {
   const [showInstall, setShowInstall] = useState(() => shouldOfferMobileInstall() && sessionStorage.getItem("calorie-logger-install-dismissed") !== "true");
   const [session, setSession] = useState<StoredSession | null | undefined>(undefined);
@@ -1290,7 +1495,15 @@ export default function App() {
     return () => { cancelled = true; };
   }, [beginSession, requireLogin]);
 
-  useEffect(() => { setSelected(new Set()); setConfirmingDelete(false); setEntryMenu(undefined); }, [date]);
+  // Before the paint, not after it. An ordinary effect runs once the new day is already on screen,
+  // so its first frame still carried the previous day's selection bar and then cleared it -- a blink
+  // in its own right, and one the page turning underneath would otherwise reproduce faithfully.
+  // The scroll goes back with it: a page turned to starts at its top, and letting the browser clamp
+  // the old offset against the new day's height instead makes the arriving page jump.
+  useLayoutEffect(() => {
+    setSelected(new Set()); setConfirmingDelete(false); setEntryMenu(undefined);
+    document.documentElement.scrollTop = 0;
+  }, [date]);
 
   // Dialogs are laid out against the part of the window the keyboard leaves visible.
   useEffect(() => observeViewport(), []);
@@ -1306,27 +1519,6 @@ export default function App() {
     const state = !session?.token ? "signedOut" : syncStatus.state === "offline" ? "offline" : syncStatus.state === "blocked" ? "error" : "connected";
     if (native) void native.postMessage({ method: "updateMenuState", payload: { state } });
   }, [session, syncStatus.state]);
-
-  // What the macOS menu bar drives. The menu bar is that host's only entry point, so it reaches
-  // every panel and mode the gear reaches elsewhere -- opening the same panels, not copies of them.
-  useEffect(() => {
-    window.calorieLogger = {
-      openAddFood: () => { setEditingEntry(undefined); setAddMeal("breakfast"); setModal("add"); },
-      openTargets: () => setModal("targets"),
-      openExport: () => setModal("export"),
-      openConnection: () => setModal("connection"),
-      openSync: () => setModal("sync"),
-      openReset: () => setModal("reset"),
-      openAbout: () => setModal("about"),
-      startSelecting: () => { setSelecting(true); setReordering(false); setSelected(new Set()); setModal(null); },
-      startReordering: () => { setReordering(true); setSelecting(false); setSelected(new Set()); setModal(null); },
-      previousDay: () => setDate((current) => moveDate(current, -1)),
-      nextDay: () => setDate((current) => moveDate(current, 1)),
-      jumpToToday: () => setDate(menuDate),
-      syncNow: () => { void syncEngine.syncNow(); }
-    };
-    return () => { delete window.calorieLogger; };
-  }, [menuDate]);
 
   // The Edit menu's commands act on whatever holds focus, so the host is told when a field has it.
   useEffect(() => {
@@ -1415,9 +1607,74 @@ export default function App() {
   });
   const pageSwipe = usePageSwipe({
     enabled: installedApp && !selecting && !reordering && !loading && modal === null,
+    // A button is not a swipe: it is not held to the installed-app gate a finger is, because a Mac
+    // pressing an arrow should get its page turned too.
+    canTurn: !loading && modal === null,
     onPrevious: useCallback(() => setDate((current) => moveDate(current, -1)), []),
     onNext: useCallback(() => setDate((current) => moveDate(current, 1)), [])
   });
+  const turnTo = pageSwipe.turnTo;
+  const turn = pageSwipe.turn;
+  // Only the direction drives the copy. Tracking the whole turn object would rebuild the neighbour
+  // on every frame of a drag, which is exactly what keeping the geometry out of React avoided.
+  const turnTowards = turn?.towards;
+  const dayViewRef = useRef<HTMLDivElement | null>(null);
+  const underContentRef = useRef<HTMLDivElement | null>(null);
+
+  // The day on the other side of the turn, computed only while one is running. The replica is in
+  // memory, so this costs a filter and a sum; rendering it is the part worth not doing all the time.
+  const neighbour = useMemo(() => {
+    if (!turnTowards) return undefined;
+    const neighbourDate = moveDate(date, turnTowards === "next" ? 1 : -1);
+    const neighbourDay = repository.day(neighbourDate);
+    return {
+      date: neighbourDate, day: neighbourDay,
+      contributions: foodContributions(neighbourDay.entries, targets, contributionThreshold)
+    };
+  }, [turnTowards, date, snapshot, targets, contributionThreshold]);
+
+  // The sheet is the window; the day is inset in `main` and may be pushed down by the banner. Only
+  // measurement can tell the copy how far, and it is read once a turn, after the copy has mounted
+  // and before it is painted, so it is never drawn in the wrong place.
+  useLayoutEffect(() => {
+    const wrapper = underContentRef.current;
+    const live = dayViewRef.current;
+    if (!wrapper || !live) return;
+    if (!turnTowards) { wrapper.removeAttribute("style"); return; }
+    const rect = live.getBoundingClientRect();
+    if (!rect.width) return;
+    // Unrounded: the log's columns are a grid off this width, and half a pixel of rounding reflows
+    // the ellipsised food names at the handoff.
+    wrapper.style.left = `${rect.left}px`;
+    wrapper.style.top = `${rect.top + window.scrollY}px`;
+    wrapper.style.width = `${rect.width}px`;
+    wrapper.style.minHeight = `${rect.height}px`;
+  }, [turnTowards, date]);
+
+  // What the macOS menu bar drives. The menu bar is that host's only entry point, so it reaches
+  // every panel and mode the gear reaches elsewhere -- opening the same panels, not copies of them.
+  // It sits below the gesture deliberately: it hands the day commands to the same page turn, and a
+  // dependency array naming `turnTo` is read in source order, so declaring this any earlier throws.
+  useEffect(() => {
+    window.calorieLogger = {
+      openAddFood: () => { setEditingEntry(undefined); setAddMeal("breakfast"); setModal("add"); },
+      openTargets: () => setModal("targets"),
+      openExport: () => setModal("export"),
+      openConnection: () => setModal("connection"),
+      openSync: () => setModal("sync"),
+      openReset: () => setModal("reset"),
+      openAbout: () => setModal("about"),
+      startSelecting: () => { setSelecting(true); setReordering(false); setSelected(new Set()); setModal(null); },
+      startReordering: () => { setReordering(true); setSelecting(false); setSelected(new Set()); setModal(null); },
+      previousDay: () => turnTo("previous"),
+      nextDay: () => turnTo("next"),
+      // Not a page turn: a jump of forty days is not one page, and pretending otherwise would say
+      // something untrue about how far it went.
+      jumpToToday: () => setDate(menuDate),
+      syncNow: () => { void syncEngine.syncNow(); }
+    };
+    return () => { delete window.calorieLogger; };
+  }, [menuDate, turnTo]);
 
   /** The day's entries in the order they are shown, so a keyboard move crosses meals as a drag does. */
   const orderedEntries = useMemo(
@@ -1535,10 +1792,35 @@ export default function App() {
   if (!session?.token) return <div className="connection-page"><ConnectionForm initial={connectionDefaults} onConnected={(connected) => void beginSession(connected)} /></div>;
 
   const offerMacApp = macApp && shouldOfferMacApplication() && !macBannerDismissed;
-  // The day itself never moves; only the corner being lifted does, and the page it belongs to is
-  // exchanged under it.
-  const turn = pageSwipe.turn;
-  const turnClass = turn ? `is-${turn.stage}` : "";
+
+  // Everything the live day answers a press with. The copy under a turning page is given none of it
+  // and is otherwise handed the very same data, which is what makes the two indistinguishable.
+  const dayViewLive: DayViewLive = {
+    containerProps: pageSwipe.containerProps,
+    gestures, finePointer, dropTargetRef,
+    goToToday: () => setDate(menuDate),
+    turnTo,
+    openModal: (which) => setModal(which),
+    addFood: openAdd,
+    repeatMeal,
+    toggleMeal,
+    edit,
+    confirmEntry: setConfirmingEntry,
+    toggleSelected,
+    setMealSelected,
+    toggleAllSelected,
+    startSelecting: () => { setSelecting(true); setReordering(false); setSelected(new Set()); },
+    endSelecting,
+    startReordering: () => { setReordering(true); setSelecting(false); setSelected(new Set()); },
+    endReordering: () => { setReordering(false); setDragging(undefined); },
+    setConfirmingDelete,
+    deleteSelected,
+    transfer: openTransfer,
+    setDropTarget,
+    finishDrag,
+    setDragging,
+    moveByKeyboard
+  };
 
   return <div className="app-shell">
     <main>
@@ -1547,146 +1829,35 @@ export default function App() {
         <a className="banner-action" href={repository.downloadURL(macApp.url)}>Download</a>
         <button className="banner-dismiss" onClick={dismissMacBanner} aria-label="Do not offer the Mac app again">×</button>
       </section>}
-      <div className={`day-view ${turnClass}`} {...pageSwipe.containerProps}>
-      <section className="date-header">
-        {date !== menuDate && <button className="today-button" onClick={() => setDate(menuDate)} aria-label="Go to today" title="Go to today"><HomeIcon /></button>}
-        <div className="date-navigation">
-          <button className="date-arrow" onClick={() => setDate(moveDate(date, -1))} aria-label="Previous day"><ChevronIcon direction="left" /></button>
-          <div className="date-title"><h1>{dateDisplay.title}</h1><span className="date-weekday">{dateDisplay.eyebrow}</span></div>
-          <button className="date-arrow" onClick={() => setDate(moveDate(date, 1))} aria-label="Next day"><ChevronIcon direction="right" /></button>
-        </div>
-        <div className="header-actions">
-          <SyncChip status={syncStatus} onOpen={() => setModal("sync")} />
-          {/* The native host keeps its commands in the menu bar, where a Mac application keeps
-              them, so a second door into the same rooms would only be a way to disagree. */}
-          {!isNativeHost() && <button
-            className={`settings-button ${update === "ready" ? "has-update" : ""}`}
-            onClick={() => setModal("settings")}
-            aria-label={update === "ready" ? "Open settings; an update is ready" : "Open settings"}
-          ><SettingsIcon /></button>}
-        </div>
-      </section>
-
-      <section className="metrics-grid" aria-label="Nutrition totals">
-        <MetricCard label="Energy" value={day.totals.calories} target={targets.calories} kind="calories" onOpenTargets={() => setModal("targets")} />
-        <MetricCard label="Protein" value={day.totals.protein} target={targets.protein} kind="protein" onOpenTargets={() => setModal("targets")} />
-        <MetricCard label="Fat" value={day.totals.fat} target={targets.fat} kind="fat" onOpenTargets={() => setModal("targets")} />
-        <MetricCard label="Carbs" value={day.totals.carbs} target={targets.carbs} kind="carbs" onOpenTargets={() => setModal("targets")} />
-      </section>
-
-      <section className="log-section">
-        {reordering && <div className="mode-bar">
-          <strong>Drag entries into place</strong>
-          <span className="visually-hidden">With an entry focused, the up and down arrow keys move it between positions and meals.</span>
-          <button onClick={() => { setReordering(false); setDragging(undefined); }}>Done</button>
-        </div>}
-        {selecting && <div className={`selection-bar ${confirmingDelete ? "confirm-delete" : ""}`}>
-          {confirmingDelete ? <><strong>Delete {selected.size} selected entr{selected.size === 1 ? "y" : "ies"}?</strong><span /><button onClick={() => setConfirmingDelete(false)}>Cancel</button><button className="danger-action" onClick={deleteSelected}>Delete</button></> : <>
-            <strong>{selected.size ? `${selected.size} selected` : "Tap entries to select"}</strong>
-            <span />
-            <button onClick={toggleAllSelected}>{selected.size === day.entries.length ? "Clear" : "Select all"}</button>
-            {selected.size > 0 && <><button onClick={() => openTransfer([...selected], "copy")}>Copy…</button><button className="danger-text" onClick={() => setConfirmingDelete(true)}>Delete</button></>}
-            <button onClick={endSelecting}>Done</button>
-          </>}
-        </div>}
-        {/* Where there is room for them, the two modes are on the page rather than behind a menu.
-            Narrower screens reach them from Settings, which the matching media query hides here. */}
-        {!loading && <div className="log-tools">
-          <button disabled={!day.entries.length || selecting} onClick={() => { setSelecting(true); setReordering(false); setSelected(new Set()); }}>Select</button>
-          <button disabled={!day.entries.length || reordering} onClick={() => { setReordering(true); setSelecting(false); setSelected(new Set()); }}>Reorder</button>
-        </div>}
-        {loading ? <div className="empty-state"><p>Opening today’s page…</p></div> : <div className={`meal-log ${dragging ? "is-dragging" : ""}`} role="table" aria-label="Food log by meal">
-          <div className="food-table-header" role="row">
-            {selecting && <span className="check-cell" aria-hidden="true" />}
-            <span className="food-table-header-main">
-              <span>Food</span>
-              {LOG_COLUMNS.map((column) => <span key={column.long}><span className="column-long">{column.long}</span><span className="column-short">{column.short}</span></span>)}
-            </span>
-          </div>
-          {MEALS.map((meal) => {
-            const entries = day.entries.filter((entry) => entry.meal === meal.id);
-            const mealNutrition = totalNutrition(entries);
-            const collapsed = collapsedMeals.has(meal.id);
-            return <section className="meal-section" key={meal.id} aria-labelledby={`meal-${meal.id}`}>
-              <header className="meal-heading" data-meal-drop data-meal={meal.id} onDragOver={(event) => { event.preventDefault(); const next: DropTarget = { meal: meal.id, position: "end" }; dropTargetRef.current = next; setDropTarget(next); }} onDrop={(event) => { event.preventDefault(); finishDrag(event.dataTransfer.getData("text/plain") || dragging || "", dropTargetRef.current); }}>
-                {selecting && <label className="check-cell" onClick={(event) => event.stopPropagation()}><input
-                  type="checkbox"
-                  checked={entries.length > 0 && entries.every((item) => selected.has(item.id))}
-                  ref={(node) => { if (node) node.indeterminate = entries.some((item) => selected.has(item.id)) && !entries.every((item) => selected.has(item.id)); }}
-                  disabled={!entries.length}
-                  onChange={(event) => setMealSelected(meal.id, event.target.checked)}
-                  aria-label={`Select all ${meal.label}`}
-                /></label>}
-                <div className="meal-heading-main">
-                <div className="meal-primary">
-                  <h3 id={`meal-${meal.id}`}><button className="meal-toggle" onClick={() => toggleMeal(meal.id)} aria-expanded={!collapsed} aria-controls={`meal-entries-${meal.id}`} title={`${collapsed ? "Expand" : "Collapse"} ${meal.label}`}><span className="meal-chevron"><MealChevronIcon expanded={!collapsed} /></span><span>{meal.label}</span></button></h3>
-                  <div className="meal-actions"><button className="meal-repeat" onClick={() => repeatMeal(meal.id)} aria-label={`Repeat yesterday's ${meal.label}`} title={`Repeat yesterday's ${meal.label}`}><RepeatIcon /></button><button className="meal-add" onClick={() => openAdd(meal.id)} aria-label={`Add food to ${meal.label}`} title={`Add food to ${meal.label}`}><PlusIcon /></button></div>
-                </div>
-                <MealTotals totals={mealNutrition} />
-                </div>
-              </header>
-              <div id={`meal-entries-${meal.id}`} hidden={collapsed} className={`meal-entries ${dropTarget?.meal === meal.id && dropTarget.position === "end" ? "drop-at-end" : ""}`}>
-                {entries.map((entry) => {
-                  const indicator = dropTarget?.entryId === entry.id ? `drop-${dropTarget.position}` : "";
-                  const contribution = contributions.get(entry.foodId);
-                  const rowGestures = gestures.rowProps(entry.id);
-                  const revealed = gestures.revealed === entry.id;
-                  const slid = gestures.sliding?.id === entry.id ? gestures.sliding.offset : revealed ? -ROW_ACTIONS_WIDTH : 0;
-                  return <div className={`food-row ${selecting ? "is-selecting" : ""} ${reordering ? "is-reordering" : ""} ${selected.has(entry.id) ? "is-selected" : ""} ${dragging === entry.id ? "is-dragged" : ""} ${slid ? "is-slid" : ""} ${gestures.sliding?.id === entry.id ? "is-sliding" : ""} ${entryMenu?.id === entry.id ? "is-menu-target" : ""} ${indicator}`} role="row" key={entry.id} data-drop-entry={entry.id} data-meal={meal.id} draggable={reordering || finePointer}
-                    onDragStart={(event) => { if (selecting) return; setReordering(true); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", entry.id); setDragging(entry.id); }}
-                    onDragEnd={() => reordering && finishDrag(entry.id)}
-                    onPointerDown={(event) => {
-                      if (reordering && event.pointerType !== "mouse") { event.preventDefault(); setDragging(entry.id); return; }
-                      rowGestures.onPointerDown(event);
-                    }}
-                    onContextMenu={rowGestures.onContextMenu}
-                    onDragOver={(event) => {
-                      if (!reordering) return;
-                      event.preventDefault();
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      const pointerY = Number.isFinite(event.clientY) ? event.clientY : rect.top;
-                      const next: DropTarget = { meal: meal.id, entryId: entry.id, position: pointerY < rect.top + rect.height / 2 ? "before" : "after" };
-                      dropTargetRef.current = next; setDropTarget(next);
-                    }}
-                    onDrop={(event) => { event.preventDefault(); finishDrag(event.dataTransfer.getData("text/plain") || dragging || "", dropTargetRef.current); }}>
-                    {selecting && <label className="check-cell" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected.has(entry.id)} onChange={() => toggleSelected(entry.id)} aria-label={`Select ${entry.name}`} /></label>}
-                    {(revealed || gestures.sliding?.id === entry.id) && <div className="row-actions" style={{ transform: `translateX(${ROW_ACTIONS_WIDTH + slid}px)` }}>
-                      <button className="row-action" onClick={() => openTransfer([entry.id], "copy")}>Copy…</button>
-                      <button className="row-action is-danger" onClick={() => setConfirmingEntry(entry)}>Delete</button>
-                    </div>}
-                    <button className="food-entry-main"
-                      onClick={() => {
-                        if (gestures.claimedClick()) return;
-                        if (selecting) toggleSelected(entry.id);
-                        else if (revealed) gestures.closeReveal();
-                        else if (!reordering) edit(entry);
-                      }}
-                      onKeyDown={(event) => {
-                        if (!reordering || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
-                        event.preventDefault();
-                        moveByKeyboard(entry.id, event.key === "ArrowDown" ? 1 : -1);
-                      }}
-                      aria-label={`${selecting ? `Select ${entry.name}` : reordering ? `Reorder ${entry.name}` : `Edit ${entry.name}`}${shareLabel(contribution)}`}>
-                      <span className="food-name-cell"><FoodVisual value={entry.icon} className="food-icon" label={entry.name} /><span className="food-name-text">{entry.name}</span></span>
-                      <span>{fmt(entry.amount)}</span><span>{fmt(entry.protein)}</span>
-                      <MacroCell value={entry.fat} macro="fat" name={entry.name} contribution={contribution} />
-                      <MacroCell value={entry.carbs} macro="carbs" name={entry.name} contribution={contribution} />
-                      <span className="energy-cell">{fmt(entry.calories, true)}</span>
-                    </button>
-                  </div>;
-                })}
-              </div>
-            </section>;
-          })}
-        </div>}
-      </section>
+      <div className="day-view" ref={dayViewRef} {...pageSwipe.containerProps}>
+        <DayView
+          date={date} menuDate={menuDate} day={day} targets={targets} contributions={contributions}
+          collapsedMeals={collapsedMeals} syncStatus={syncStatus} update={update}
+          selecting={selecting} reordering={reordering} loading={loading}
+          selected={selected} confirmingDelete={confirmingDelete}
+          dragging={dragging} dropTarget={dropTarget} entryMenuId={entryMenu?.id}
+          live={dayViewLive}
+        />
       </div>
     </main>
-    {turn && turn.stage !== "arriving" && <div
-      className={`page-fold page-fold-${turn.corner} ${turn.stage === "dragging" ? "" : `is-${turn.stage}`}`}
-      style={{ width: `${turn.fold}px`, height: `${turn.fold}px` }}
-      aria-hidden="true"
-    />}
+    {/* The sheet coming up underneath and the corner lifted off it. Both are always mounted and
+        hidden, so the first frame of a flick has nothing to wait for; the gesture writes their
+        shapes straight onto them rather than through a render. The sheet carries the day being
+        turned to, rendered by the very same component, which is what makes the handoff invisible:
+        there is no frame where the screen shows something the arriving day does not. */}
+    <div className="page-under" ref={pageSwipe.underRef} data-corner={turn?.corner} aria-hidden="true" inert>
+      <div className="page-under-content" ref={underContentRef}>
+        {turn && neighbour && <DayView
+          date={neighbour.date} menuDate={menuDate} day={neighbour.day} targets={targets}
+          contributions={neighbour.contributions} collapsedMeals={collapsedMeals}
+          syncStatus={syncStatus} update={update}
+          selecting={selecting} reordering={reordering} loading={false}
+          selected={NOTHING_SELECTED} confirmingDelete={false}
+          dragging={dragging} dropTarget={dropTarget} entryMenuId={undefined}
+        />}
+      </div>
+    </div>
+    <div className="page-fold" ref={pageSwipe.flapRef} data-corner={turn?.corner} aria-hidden="true" />
 
     {modal === "add" && <AddFoodModal
       date={date}
