@@ -1535,13 +1535,10 @@ export default function App() {
   if (!session?.token) return <div className="connection-page"><ConnectionForm initial={connectionDefaults} onConnected={(connected) => void beginSession(connected)} /></div>;
 
   const offerMacApp = macApp && shouldOfferMacApplication() && !macBannerDismissed;
-  // An arriving page is animated by the stylesheet from the side it came in on, so it must not
-  // carry a transform of its own for the animation to have to beat.
+  // The day itself never moves; only the corner being lifted does, and the page it belongs to is
+  // exchanged under it.
   const turn = pageSwipe.turn;
-  const turnClass = turn ? (turn.stage === "arriving" ? `is-arriving-${turn.towards}` : `is-${turn.stage}`) : "";
-  const turnStyle = turn && turn.stage !== "arriving"
-    ? { transform: `perspective(1200px) rotateY(${turn.angle}deg)`, transformOrigin: `${turn.hinge} center` }
-    : undefined;
+  const turnClass = turn ? `is-${turn.stage}` : "";
 
   return <div className="app-shell">
     <main>
@@ -1550,7 +1547,7 @@ export default function App() {
         <a className="banner-action" href={repository.downloadURL(macApp.url)}>Download</a>
         <button className="banner-dismiss" onClick={dismissMacBanner} aria-label="Do not offer the Mac app again">×</button>
       </section>}
-      <div className={`day-view ${turnClass}`} style={turnStyle} {...pageSwipe.containerProps}>
+      <div className={`day-view ${turnClass}`} {...pageSwipe.containerProps}>
       <section className="date-header">
         {date !== menuDate && <button className="today-button" onClick={() => setDate(menuDate)} aria-label="Go to today" title="Go to today"><HomeIcon /></button>}
         <div className="date-navigation">
@@ -1685,6 +1682,11 @@ export default function App() {
       </section>
       </div>
     </main>
+    {turn && turn.stage !== "arriving" && <div
+      className={`page-fold page-fold-${turn.corner} ${turn.stage === "dragging" ? "" : `is-${turn.stage}`}`}
+      style={{ width: `${turn.fold}px`, height: `${turn.fold}px` }}
+      aria-hidden="true"
+    />}
 
     {modal === "add" && <AddFoodModal
       date={date}

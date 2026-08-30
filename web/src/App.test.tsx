@@ -1652,7 +1652,7 @@ describe("page swipe navigation", () => {
     expect(await screen.findByText(displayDate(moveDate(SEEDED_DATE, 1)).title)).toBeTruthy();
   });
 
-  it("lifts the page as the finger carries it, hinged on the edge it is heading for", async () => {
+  it("peels a bottom corner as the finger carries it, and leaves the day itself still", async () => {
     installedApp();
     await day();
     render(<App />);
@@ -1664,14 +1664,34 @@ describe("page swipe navigation", () => {
       fireEvent.pointerMove(document, { pointerType: "touch", pointerId: 1, clientX: x, clientY: 41 });
     }
 
-    expect(view.className).toContain("is-dragging");
-    // Heading left, so the page hinges on the left and lifts its right edge towards the reader.
-    expect(view.style.transformOrigin).toBe("left center");
-    expect(view.style.transform).toMatch(/rotateY\(-\d/);
+    // Heading left is heading forward, so it is the right-hand corner that lifts, as in a book.
+    const fold = document.querySelector<HTMLElement>(".page-fold")!;
+    expect(fold.className).toContain("page-fold-right");
+    expect(parseFloat(fold.style.width)).toBeGreaterThan(0);
+    // Nothing page-sized moves: motion that large under the reader's eyes is what this replaced.
+    expect(view.style.transform).toBe("");
 
     fireEvent.pointerUp(document, { pointerType: "touch", pointerId: 1, clientX: 244, clientY: 41 });
     await settled();
     expect(screen.getByText(displayDate(SEEDED_DATE).title)).toBeTruthy();
+    expect(document.querySelector(".page-fold")).toBeNull();
+  });
+
+  it("lifts the left corner when the swipe goes back", async () => {
+    installedApp();
+    await day();
+    render(<App />);
+    await screen.findByRole("button", { name: "Add food to Breakfast" });
+
+    fireEvent.pointerDown(dayView(), { pointerType: "touch", pointerId: 1, button: 0, clientX: 100, clientY: 40 });
+    for (const x of [108, 120, 136, 156]) {
+      fireEvent.pointerMove(document, { pointerType: "touch", pointerId: 1, clientX: x, clientY: 41 });
+    }
+
+    expect(document.querySelector(".page-fold")!.className).toContain("page-fold-left");
+
+    fireEvent.pointerUp(document, { pointerType: "touch", pointerId: 1, clientX: 156, clientY: 41 });
+    await settled();
   });
 
   it("gives the page up when a second finger joins, so a pinch never turns it", async () => {

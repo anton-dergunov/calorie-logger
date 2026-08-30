@@ -6,10 +6,11 @@ import type { PointerEvent as ReactPointerEvent } from "react";
  * press: not "what does a hold on this row mean" but "is this drag meant for the whole day".
  * A press that starts on a row is left entirely alone here, so the two never compete for it.
  *
- * The day turns like a page. It hinges on the edge the finger is heading towards, lifts as far as
- * the drag carries it, and then either falls back flat or carries on over and away while the next
- * day arrives from the far side. A nudge was not enough: shifted a few pixels the page read as the
- * browser's own pinch-zoom rubber-banding rather than as an answer to the swipe.
+ * The day is lifted by a bottom corner, the way a page in a book is: the right corner goes forward,
+ * the left one back. Only that corner moves. A nudge of the whole page was too little to read as an
+ * answer at all -- it looked like the browser's own pinch-zoom rubber-banding -- and turning the
+ * whole page in perspective was too much, being a page-sized rotation under the reader's eyes every
+ * time they changed day. The corner says the same thing without moving anything to say it.
  */
 
 /** Movement allowed before a direction is decided. Larger than a row's own tolerance: a misfired
@@ -23,18 +24,18 @@ const DIRECTION_BIAS = 1.75;
 /** Raw finger travel needed on release to commit to a day change. A fixed distance, not a share
     of the container's width, so the gesture feels the same on a phone and on a tablet. */
 const COMMIT_DISTANCE = 72;
-/** Degrees of lift per pixel dragged, and how far a drag alone can lift the page. A drag that has
-    earned its day reaches about half the cap, so the page is plainly turning before it is let go. */
-const LIFT_RATE = 0.18;
-const LIFT_CAP = 22;
-/** How far the page carries on turning once the day is committed. Short of a right angle: the page
-    is edge-on and gone well before then, and the last degrees would only cost time. */
-const TURN_AWAY = 78;
-/** Paired with the transitions and keyframes on `.day-view` in `styles.css`. `LEAVE_MS` is also how
-    long the day itself waits to change, so the page that turns away is the one being left. */
-const LEAVE_MS = 150;
-const RETURN_MS = 200;
-const ARRIVE_MS = 190;
+/** Pixels of corner peeled back per pixel dragged, and the largest fold a drag alone can raise. A
+    drag that has earned its day lifts a corner half the cap wide, which is a plain dog-ear well
+    before it is let go. */
+const FOLD_RATE = 1.5;
+const FOLD_MAX = 170;
+/** How far the corner carries on once the day is committed, as the page goes over. */
+const FOLD_AWAY = 190;
+/** Paired with the transitions and keyframes in `styles.css`. `LEAVE_MS` is also how long the day
+    itself waits to change, so the page being turned is the one being left. */
+const LEAVE_MS = 130;
+const RETURN_MS = 180;
+const ARRIVE_MS = 170;
 
 type Phase = "watching" | "dragging";
 type Towards = "next" | "previous";
@@ -48,9 +49,10 @@ interface Pending {
 }
 
 export interface PageTurn {
-  /** Degrees the page has lifted. Negative hinges on the left, positive on the right. */
-  angle: number;
-  hinge: "left" | "right";
+  /** How far the corner has been peeled back, in pixels along each edge it runs. */
+  fold: number;
+  /** The bottom corner the page is lifted by. The right one goes forward, as in a book. */
+  corner: "left" | "right";
   towards: Towards;
   stage: "dragging" | "leaving" | "arriving" | "returning";
 }
@@ -69,13 +71,13 @@ export interface PageSwipe {
   turn: PageTurn | undefined;
 }
 
-/** A page turning end over end is exactly the motion the preference is asking about, so the day
-    changes without one. The drag's own following is direct manipulation and stays. */
+/** The page going over on its own is the one part of this the preference is asking about, so the day
+    changes without it. The corner following the finger is direct manipulation and stays. */
 function reducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
 
-const hingeFor = (towards: Towards) => (towards === "next" ? "left" : "right");
+const cornerFor = (towards: Towards) => (towards === "next" ? "right" : "left");
 
 export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions): PageSwipe {
   const pending = useRef<Pending | null>(null);
@@ -107,7 +109,7 @@ export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions):
 
   const settleBack = useCallback((towards: Towards) => {
     release();
-    setTurn({ angle: 0, hinge: hingeFor(towards), towards, stage: "returning" });
+    setTurn({ fold: 0, corner: cornerFor(towards), towards, stage: "returning" });
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => { timer.current = undefined; setTurn(undefined); }, RETURN_MS);
   }, [release]);
@@ -117,12 +119,12 @@ export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions):
     const step = towards === "next" ? onNext : onPrevious;
     if (reducedMotion()) { setTurn(undefined); step(); return; }
     leaving.current = true;
-    setTurn({ angle: towards === "next" ? -TURN_AWAY : TURN_AWAY, hinge: hingeFor(towards), towards, stage: "leaving" });
+    setTurn({ fold: FOLD_AWAY, corner: cornerFor(towards), towards, stage: "leaving" });
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
       leaving.current = false;
       step();
-      setTurn({ angle: 0, hinge: hingeFor(towards), towards, stage: "arriving" });
+      setTurn({ fold: 0, corner: cornerFor(towards), towards, stage: "arriving" });
       timer.current = window.setTimeout(() => { timer.current = undefined; setTurn(undefined); }, ARRIVE_MS);
     }, LEAVE_MS);
   }, [release, onNext, onPrevious]);
@@ -158,8 +160,8 @@ export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions):
       moveEvent.preventDefault();
       current.towards = dx < 0 ? "next" : "previous";
       setTurn({
-        angle: Math.max(-LIFT_CAP, Math.min(LIFT_CAP, dx * LIFT_RATE)),
-        hinge: hingeFor(current.towards), towards: current.towards, stage: "dragging"
+        fold: Math.min(FOLD_MAX, Math.abs(dx) * FOLD_RATE),
+        corner: cornerFor(current.towards), towards: current.towards, stage: "dragging"
       });
     };
     const up = (upEvent: PointerEvent) => {
