@@ -1716,38 +1716,35 @@ describe("page swipe navigation", () => {
     expect(flap().dataset.corner).toBe("bottom-left");
   });
 
-  it("turns the page when a day arrow is pressed, without needing a finger", async () => {
+  it("changes the day outright from a day arrow, with no page to turn", async () => {
     await day();
     render(<App />);
     await screen.findByRole("button", { name: "Add food to Breakfast" });
 
     fireEvent.click(screen.getByRole("button", { name: "Next day" }));
 
-    expect(turning()).toBe("bottom-right");
-    // And it really is drawn, not merely begun.
-    await act(() => new Promise<void>((resolve) => { setTimeout(resolve, 60); }));
-    expect(folding()).toBe(true);
+    // Turning a page is what a finger does. A button just goes there.
+    expect(turning()).toBeUndefined();
+    expect(folding()).toBe(false);
     expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, 1)).title })).toBeTruthy();
   });
 
-  it("turns the page for the menu bar too", async () => {
+  it("changes the day outright from the menu bar too", async () => {
     await day();
     render(<App />);
     await screen.findByRole("button", { name: "Add food to Breakfast" });
 
     act(() => window.calorieLogger!.nextDay());
 
-    expect(turning()).toBe("bottom-right");
+    expect(turning()).toBeUndefined();
     expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, 1)).title })).toBeTruthy();
   });
 
-  it("keeps both days when one turn interrupts another", async () => {
+  it("keeps both days when the menu bar steps twice in a row", async () => {
     await day();
     render(<App />);
     await screen.findByRole("button", { name: "Add food to Breakfast" });
 
-    // The second turn cuts the first short. The day the first one had promised is still owed, so it
-    // is paid on the way past rather than swallowed.
     act(() => window.calorieLogger!.nextDay());
     act(() => window.calorieLogger!.nextDay());
 
@@ -1807,31 +1804,17 @@ describe("page swipe navigation", () => {
     expect(under.hasAttribute("inert")).toBe(true);
   });
 
-  it("shows the modes the arriving day will be in, so none of them appear at the handoff", async () => {
-    await day([entry("a", "Oats", "breakfast", 0)]);
-    render(<App />);
-    await screen.findByText("Oats");
-    fireEvent.click(screen.getByRole("button", { name: "Reorder" }));
-    await screen.findByText("Drag entries into place");
-
-    // Turning is allowed while reordering, so the copy has to be in that mode too: the bar and the
-    // rows it restyles would otherwise pop back in as the page landed.
-    fireEvent.click(screen.getByRole("button", { name: "Next day" }));
-    await act(() => new Promise<void>((resolve) => { setTimeout(resolve, 60); }));
-
-    const under = document.querySelector<HTMLElement>(".page-under")!;
-    expect(under.textContent).toContain("Drag entries into place");
-  });
-
-  it("changes the day without turning the page when motion is reduced", async () => {
+  it("changes the day without sweeping the page away when motion is reduced", async () => {
+    installedApp();
     vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
     await day();
     render(<App />);
     await screen.findByRole("button", { name: "Add food to Breakfast" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Next day" }));
+    swipe(metricsGrid(), -100);
 
-    expect(turning()).toBeUndefined();
+    // The corner still followed the finger -- that is direct manipulation -- but nothing carries on
+    // moving once it is lifted.
     expect(folding()).toBe(false);
     expect(await screen.findByRole("heading", { level: 1, name: displayDate(moveDate(SEEDED_DATE, 1)).title })).toBeTruthy();
   });

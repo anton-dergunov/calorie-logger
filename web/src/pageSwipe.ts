@@ -41,17 +41,15 @@ const TILT = 0.7;
     still to cross so that the last tenth of a drag does not crawl. */
 const SWEEP_MS = 240;
 const SWEEP_FLOOR_MS = 90;
-/** A turn played rather than dragged has the whole page to cross and nothing to keep up with, so it
-    is slower on purpose -- the point of it is to be watched. */
-const PLAYED_MS = 400;
 const RETURN_MS = 190;
 /** How far the sheet below is carried past the crease, to keep the two edges from showing a seam. */
 const SEAM_OVERLAP = 0.5;
-/** How far behind the finger the paper trails. A first-order lag settles `TAU x velocity` behind, so
-    this is about 24px at a walking drag and would be a couple of hundred at a flick -- hence the
-    clamp, which keeps a fast drag coupled to the finger while a slow one still has some weight. */
-const FOLLOW_TAU_MS = 60;
-const MAX_LAG = 24;
+/** How far behind the finger the paper trails. A first-order lag settles `TAU x velocity` behind,
+    which at a flick would be a couple of hundred pixels -- hence the clamp, which is what actually
+    decides the weight: the paper is never further behind than this, so a fast drag stays coupled to
+    the finger while a slow one still has to be pulled. */
+const FOLLOW_TAU_MS = 100;
+const MAX_LAG = 40;
 /** Near enough to the finger to stop asking for frames. Without it a finger held still spins rAF. */
 const CAUGHT_UP = 0.05;
 
@@ -83,9 +81,6 @@ export interface PageTurn {
 export interface PageSwipeOptions {
   /** False while installed-app/native-host/mode gating says the drag should not react at all. */
   enabled: boolean;
-  /** False only while there is no day to turn to. A button is not a swipe, so it is not held to the
-      same gate: a Mac has no finger to offer and should still get its page turned. */
-  canTurn: boolean;
   onPrevious(): void;
   onNext(): void;
 }
@@ -96,8 +91,6 @@ export interface PageSwipe {
   underRef: RefObject<HTMLDivElement | null>;
   flapRef: RefObject<HTMLDivElement | null>;
   turn: PageTurn | undefined;
-  /** A button's or the menu bar's day change, played as the page turn a finger would have got. */
-  turnTo(towards: Towards): void;
 }
 
 /** The page going over on its own is the part of this the preference is asking about, so the day
@@ -116,7 +109,7 @@ function pageRect(): Rect {
 
 const easeOut = (t: number) => 1 - (1 - t) * (1 - t) * (1 - t);
 
-export function usePageSwipe({ enabled, canTurn, onPrevious, onNext }: PageSwipeOptions): PageSwipe {
+export function usePageSwipe({ enabled, onPrevious, onNext }: PageSwipeOptions): PageSwipe {
   const pending = useRef<Pending | null>(null);
   const detach = useRef<(() => void) | undefined>(undefined);
   const frame = useRef<number | undefined>(undefined);
@@ -179,7 +172,7 @@ export function usePageSwipe({ enabled, canTurn, onPrevious, onNext }: PageSwipe
   useEffect(() => rest, [rest]);
   // Anything that stands the gesture down mid-turn -- a mode change, a modal opening -- puts the
   // page back rather than leaving it lifted with no finger on it.
-  useEffect(() => { if (!enabled && !canTurn) rest(); }, [enabled, canTurn, rest]);
+  useEffect(() => { if (!enabled) rest(); }, [enabled, rest]);
   // Insurance, and one-directional on purpose: this may hide the sheets but must never show them,
   // or it would race the tween that owns `display` while a turn is running.
   useLayoutEffect(() => {
@@ -248,7 +241,7 @@ export function usePageSwipe({ enabled, canTurn, onPrevious, onNext }: PageSwipe
    * already showing the day being arrived at. There is nothing to fade, because there is no frame
    * where the screen shows anything the arriving page does not.
    */
-  const sweep = useCallback((corner: FoldCorner, towards: Towards, from: Point, ms: number) => {
+  const sweep = useCallback((corner: FoldCorner, towards: Towards, from: Point) => {
     const step = towards === "next" ? onNext : onPrevious;
     if (reducedMotion()) { rest(); step(); return; }
     const page = pageRect();
@@ -256,23 +249,12 @@ export function usePageSwipe({ enabled, canTurn, onPrevious, onNext }: PageSwipe
     const travelled = Math.min(1, Math.abs(from.x) / Math.max(1, Math.abs(to.x)));
     pendingStep.current = step;
     setTurn({ corner, towards });
-    animate(corner, from, to, Math.max(SWEEP_FLOOR_MS, ms * (1 - travelled)), () => {
+    animate(corner, from, to, Math.max(SWEEP_FLOOR_MS, SWEEP_MS * (1 - travelled)), () => {
       pendingStep.current = undefined;
       step();
       setTurn(undefined);
     });
   }, [onNext, onPrevious, rest, animate]);
-
-  const turnTo = useCallback((towards: Towards) => {
-    if (!canTurn) return;
-    // A turn already running is finished off rather than queued behind: holding the menu-bar
-    // shortcut should step the day, not build a backlog of animations.
-    if (pending.current || frame.current) rest();
-    const page = pageRect();
-    const corner = liftedCorner(page, { x: page.right / 2, y: page.bottom * 0.72 }, towards);
-    setTurn({ corner, towards });
-    sweep(corner, towards, { x: 0, y: 0 }, PLAYED_MS);
-  }, [canTurn, rest, sweep]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent) => {
     if (!enabled || event.pointerType === "mouse") return;
@@ -327,7 +309,7 @@ export function usePageSwipe({ enabled, canTurn, onPrevious, onNext }: PageSwipe
       const from = clampReach(corner, current.drawn, TILT);
       release();
       if (Math.abs(delta.x) >= COMMIT_DISTANCE && (delta.x < 0) === (towards === "next")) {
-        sweep(corner, towards, from, SWEEP_MS);
+        sweep(corner, towards, from);
       } else settleBack(corner, towards, from);
     };
     document.addEventListener("pointermove", move, { passive: false });
@@ -340,5 +322,5 @@ export function usePageSwipe({ enabled, canTurn, onPrevious, onNext }: PageSwipe
     };
   }, [enabled, release, rest, paint, settleBack, sweep]);
 
-  return { containerProps: { onPointerDown }, underRef, flapRef, turn, turnTo };
+  return { containerProps: { onPointerDown }, underRef, flapRef, turn };
 }

@@ -56,11 +56,14 @@ main { width: min(1440px, calc(100% - 48px)); margin: 0 auto; flex: 1; display: 
 .day-view { flex: 1; touch-action: pan-y pinch-zoom; }
 /* A page being turned by one corner: the sheet coming up underneath, and the corner lifted off it.
    Both cover the window and are shaped entirely by the clip paths the gesture writes onto them, so
-   the day itself is never masked, moved, or repainted while a turn is running. Promoted while
-   turning, because the sheet below now carries a whole day's worth of text and re-rasterising it
-   through a changing mask every frame is the one thing here that could cost the gesture its
-   smoothness. */
-.page-under, .page-fold { position: fixed; inset: 0; z-index: 45; display: none; pointer-events: none; will-change: clip-path; }
+   the day itself is never masked, moved, or repainted while a turn is running.
+
+   Deliberately not promoted with `will-change`. It was hinted here on the assumption that clipping a
+   whole day's worth of text every frame would need its own layer, which was never measured; what it
+   did do was tear that layer down at the moment the sheets are hidden, which is exactly where a
+   flash was showing as a finger lifted. An unmeasured hint that costs a visible artifact is a bad
+   trade, so if the gesture ever does need promoting, measure it on a device first. */
+.page-under, .page-fold { position: fixed; inset: 0; z-index: 45; display: none; pointer-events: none; }
 /* The same paper the page is on, so that at the handoff -- when this sheet covers the window
    entirely and is showing the day about to be rendered -- there is nothing left to tell apart. */
 .page-under { background: var(--page-background); }

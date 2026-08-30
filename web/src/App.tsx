@@ -1189,7 +1189,7 @@ interface DayViewLive {
   finePointer: boolean;
   dropTargetRef: RefObject<DropTarget | undefined>;
   goToToday(): void;
-  turnTo(towards: "next" | "previous"): void;
+  stepDay(offset: 1 | -1): void;
   openModal(modal: "sync" | "settings" | "targets"): void;
   addFood(meal: Meal): void;
   repeatMeal(meal: Meal): void;
@@ -1247,9 +1247,9 @@ function DayView({
     <section className="date-header">
       {date !== menuDate && <button className="today-button" onClick={() => live?.goToToday()} aria-label="Go to today" title="Go to today"><HomeIcon /></button>}
       <div className="date-navigation">
-        <button className="date-arrow" onClick={() => live?.turnTo("previous")} aria-label="Previous day"><ChevronIcon direction="left" /></button>
+        <button className="date-arrow" onClick={() => live?.stepDay(-1)} aria-label="Previous day"><ChevronIcon direction="left" /></button>
         <div className="date-title"><h1>{displayDate(date).title}</h1><span className="date-weekday">{displayDate(date).eyebrow}</span></div>
-        <button className="date-arrow" onClick={() => live?.turnTo("next")} aria-label="Next day"><ChevronIcon direction="right" /></button>
+        <button className="date-arrow" onClick={() => live?.stepDay(1)} aria-label="Next day"><ChevronIcon direction="right" /></button>
       </div>
       <div className="header-actions">
         <SyncChip status={syncStatus} onOpen={() => live?.openModal("sync")} />
@@ -1607,13 +1607,9 @@ export default function App() {
   });
   const pageSwipe = usePageSwipe({
     enabled: installedApp && !selecting && !reordering && !loading && modal === null,
-    // A button is not a swipe: it is not held to the installed-app gate a finger is, because a Mac
-    // pressing an arrow should get its page turned too.
-    canTurn: !loading && modal === null,
     onPrevious: useCallback(() => setDate((current) => moveDate(current, -1)), []),
     onNext: useCallback(() => setDate((current) => moveDate(current, 1)), [])
   });
-  const turnTo = pageSwipe.turnTo;
   const turn = pageSwipe.turn;
   // Only the direction drives the copy. Tracking the whole turn object would rebuild the neighbour
   // on every frame of a drag, which is exactly what keeping the geometry out of React avoided.
@@ -1653,8 +1649,6 @@ export default function App() {
 
   // What the macOS menu bar drives. The menu bar is that host's only entry point, so it reaches
   // every panel and mode the gear reaches elsewhere -- opening the same panels, not copies of them.
-  // It sits below the gesture deliberately: it hands the day commands to the same page turn, and a
-  // dependency array naming `turnTo` is read in source order, so declaring this any earlier throws.
   useEffect(() => {
     window.calorieLogger = {
       openAddFood: () => { setEditingEntry(undefined); setAddMeal("breakfast"); setModal("add"); },
@@ -1666,15 +1660,13 @@ export default function App() {
       openAbout: () => setModal("about"),
       startSelecting: () => { setSelecting(true); setReordering(false); setSelected(new Set()); setModal(null); },
       startReordering: () => { setReordering(true); setSelecting(false); setSelected(new Set()); setModal(null); },
-      previousDay: () => turnTo("previous"),
-      nextDay: () => turnTo("next"),
-      // Not a page turn: a jump of forty days is not one page, and pretending otherwise would say
-      // something untrue about how far it went.
+      previousDay: () => setDate((current) => moveDate(current, -1)),
+      nextDay: () => setDate((current) => moveDate(current, 1)),
       jumpToToday: () => setDate(menuDate),
       syncNow: () => { void syncEngine.syncNow(); }
     };
     return () => { delete window.calorieLogger; };
-  }, [menuDate, turnTo]);
+  }, [menuDate]);
 
   /** The day's entries in the order they are shown, so a keyboard move crosses meals as a drag does. */
   const orderedEntries = useMemo(
@@ -1799,7 +1791,7 @@ export default function App() {
     containerProps: pageSwipe.containerProps,
     gestures, finePointer, dropTargetRef,
     goToToday: () => setDate(menuDate),
-    turnTo,
+    stepDay: (offset) => setDate((current) => moveDate(current, offset)),
     openModal: (which) => setModal(which),
     addFood: openAdd,
     repeatMeal,
