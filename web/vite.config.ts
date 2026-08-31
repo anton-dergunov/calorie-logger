@@ -37,6 +37,10 @@ export default defineConfig({
     injectRegister: false,
     includeAssets: ["app-icon-64.png", "apple-touch-icon.png"],
     manifest: {
+      // Distinguishes this app's identity from any other PWA sharing the same host, on a different
+      // port, that a browser might otherwise conflate it with when deciding whether it is already
+      // installed.
+      id: "/calorie-logger-app",
       name: "Calorie Logger",
       short_name: "Calorie Logger",
       description: "A calm, private calorie and macro logger.",
