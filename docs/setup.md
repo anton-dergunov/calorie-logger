@@ -203,12 +203,64 @@ own network is enough; and if the server has a real domain name and certificate,
 simpler.
 
 If you do use it, `tailscale serve` gives the server an HTTPS address on your tailnet without
-opening anything to the internet:
+opening anything to the internet. Give the app its **own service**, which means its own hostname
+and its own port 443, rather than a port on the machine's shared hostname:
 
 ```sh
 tailscale serve status
-tailscale serve --bg --https=8091 http://127.0.0.1:8090
+tailscale serve --service=svc:calorie-logger --bg --yes --https=443 http://127.0.0.1:8090
 ```
+
+The address is then `https://calorie-logger.<tailnet-name>.ts.net/`, with no port.
+
+Two things about the server come first.
+
+It needs **Tailscale 1.86.0 or later**; earlier clients have no `--service` flag at all, and answer
+it with their usage screen. Check with `tailscale version`. Synology's Package Center channel lags
+badly — it may still offer 1.58 — so install the current package by hand from
+[pkgs.tailscale.com](https://pkgs.tailscale.com/stable/#spks), picking the `-dsm7` file for the
+architecture `uname -m` reports, through **Package Center > Manual Install** *over* the running
+package. Do not uninstall first: that drops the node key and takes every existing Serve mapping
+with it. Auto-update is unsupported on Synology, so this is a manual step to repeat.
+
+The server must also have a **tag-based identity**. Tailscale refuses a service host authenticated
+as a person, answering `service hosts must be tagged nodes`. Tagging replaces that user
+authentication — the Tailscale IP survives and a new node key is issued, but the machine stops
+belonging to the account that logged it in, which affects everything else it serves. Declare the
+tag under `tagOwners` in **Access controls > JSON editor** — a tag cannot be created from the
+visual editor, which writes access rules only — then check that a rule still admits the machine
+under `tag:service-host` (the default "all users and devices" rule already does), and only then
+apply it from the **Machines** page with **Edit ACL tags**.
+
+Two more steps happen in the Tailscale admin console. On the **Services** page, **Advertised** tab,
+choose **Define a Service**. Name it `calorie-logger` — the bare name, with no `svc:` prefix, since
+the field's contents become the hostname and `svc:` belongs only in the policy file and the CLI —
+and set **Ports** to `443` in the field already prefixed with `tcp:`. Then grant access to it, or
+the name will resolve but nothing will connect: on the **Access Controls** page choose **Add rule**,
+with source `autogroup:member`, destination `svc:calorie-logger` (the `svc:` prefix is correct
+here — the console adds it to the bare name), and port `443` alone. Remove **All ports and
+protocols** if the form offers it; leaving it in grants every port on the service, which the app
+does not need.
+
+The form's JSON preview is the rule it saves, and the policy file can be edited directly instead:
+
+```json
+{
+  "src": ["autogroup:member"],
+  "dst": ["svc:calorie-logger"],
+  "ip": ["443"]
+}
+```
+
+Unless an auto-approval policy covers the host, approve it once from the **Services** page.
+
+A port on the machine's hostname (`--https=8091`) also works, but costs you Android installation
+when the machine hosts more than one PWA. Android mints a WebAPK — a real installed app — only for
+a site on the default port; on a non-standard port Chrome falls back to a home-screen shortcut,
+and that fallback does not distinguish two apps that share a hostname. Two such apps then collide:
+installing one makes the other's page offer "Open <the first app>" instead of "Install app", and
+only one can be installed at a time. A service's 443 is bound on its own virtual IP, so it is not
+the host's 443 and cannot collide with another application or service.
 
 Check the existing listeners before changing them, and have each device join the same tailnet.
 

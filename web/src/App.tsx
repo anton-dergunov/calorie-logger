@@ -284,26 +284,42 @@ function InstallGate({ onContinue }: { onContinue(): void }) {
   const platform = detectedInstallPlatform();
   const [promptAvailable, setPromptAvailable] = useState(canPromptInstall());
   const [installedHere, setInstalledHere] = useState(false);
+  const [justInstalled, setJustInstalled] = useState(false);
   useEffect(() => {
     let active = true;
     void alreadyInstalledOnThisDevice().then((installed) => { if (active) setInstalledHere(installed); });
     return () => { active = false; };
   }, []);
   useEffect(() => {
+    /* Chrome can fire its install event before this subscription exists, and the event is offered
+       once. Re-reading the captured one here closes that gap; without it the button silently never
+       appears and the only way in is Chrome's own menu. */
+    setPromptAvailable(canPromptInstall());
     const available = () => setPromptAvailable(true);
-    const installed = () => onContinue();
+    const installed = () => setJustInstalled(true);
     window.addEventListener("calorie-logger-install-available", available);
     window.addEventListener("calorie-logger-installed", installed);
     return () => {
       window.removeEventListener("calorie-logger-install-available", available);
       window.removeEventListener("calorie-logger-installed", installed);
     };
-  }, [onContinue]);
+  }, []);
   const install = async () => {
     const accepted = await promptInstall();
     setPromptAvailable(false);
-    if (accepted) onContinue();
+    if (accepted) setJustInstalled(true);
   };
+  /* Installing and then landing back in the browser reads as though the installation went
+     nowhere. The app that was just added is the place to carry on, so this stops here and leaves
+     continuing in the browser as the deliberate choice it was on the previous screen. */
+  if (justInstalled) {
+    return <div className="install-page"><section className="install-card" aria-labelledby="install-title">
+      <p className="install-kicker">Calorie Logger</p>
+      <h1 id="install-title">Calorie Logger is installed</h1>
+      <p className="install-copy">Open Calorie Logger from your home screen to carry on there.</p>
+      <button className="continue-browser" onClick={onContinue}>Continue in browser</button>
+    </section></div>;
+  }
   return <div className="install-page"><section className="install-card" aria-labelledby="install-title">
     <p className="install-kicker">Calorie Logger</p>
     <h1 id="install-title">Install the app</h1>
